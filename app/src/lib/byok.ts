@@ -195,7 +195,17 @@ async function runVeoGoogle(c: AgentConfig, prompt: string, target: string): Pro
     headers: { "Content-Type": "application/json", "x-goog-api-key": c.apiKey, "x-target-url": startUrl },
     body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: "16:9" } }),
   })
-  if (!startRes.ok) throw new Error(`video agent failed: ${startRes.status} at ${model}:predictLongRunning`)
+  if (!startRes.ok) {
+    const detail = await startRes.text().catch(() => "")
+    let msg = `video agent failed: ${startRes.status} at ${model}:predictLongRunning`
+    if (startRes.status === 429) {
+      msg =
+        "Veo quota exhausted (429) — free tier allows very few video generations per day. " +
+        "Wait until the daily reset (midnight Pacific) or enable billing on your Google AI Studio key. " +
+        (detail.match(/"message":\s*"([^"]+)"/)?.[1] ? `Endpoint said: ${detail.match(/"message":\s*"([^"]+)"/)![1]}` : "")
+    }
+    throw new Error(msg.trim())
+  }
   const startData = (await jsonOrExplain(startRes)) as { name?: string }
   const opName = startData?.name
   if (typeof opName !== "string") throw new Error("Veo did not return an operation name")

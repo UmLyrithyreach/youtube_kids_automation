@@ -7,6 +7,24 @@ function headers(c: AgentConfig): HeadersInit {
   return { "Content-Type": "application/json", Authorization: `Bearer ${c.apiKey}` }
 }
 
+// fetch with auto-retry on 429/5xx — respects Retry-After, backs off exponentially.
+async function fetchRetry(input: string, init: RequestInit, tries = 3): Promise<Response> {
+  let last: Response | null = null
+  for (let attempt = 0; attempt < tries; attempt++) {
+    const res = await fetch(input, init)
+    if (res.status !== 429 && res.status < 500) return res
+    last = res
+    if (attempt < tries - 1) {
+      const retryAfter = Number(res.headers.get("retry-after"))
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 1500 * 2 ** attempt + Math.random() * 500
+      await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+  return last!
+}
+
 // Parse a chat-completions response that may be plain JSON or an SSE stream
 // (many endpoints force `stream: true` regardless of what we ask for).
 export async function parseChatResponse(res: Response): Promise<string> {
@@ -36,7 +54,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
 }
 
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
-  const res = await fetch(`${CLEAN(c)}/v1/models`, { headers: headers(c) })
+  const res = await fetchRetry(`${CLEAN(c)}/v1/models`, { headers: headers(c) })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
   const data = await res.json()
   const list = Array.isArray(data) ? data : (data.data ?? data.models ?? [])
@@ -65,18 +83,18 @@ export async function probeAgent(capability: Capability, c: AgentConfig | null):
 
 // text-to-text — OpenAI-compatible chat completions
 export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetch(`${CLEAN(c)}/v1/chat/completions`, {
+  const res = await fetchRetry(`${CLEAN(c)}/v1/chat/completions`, {
     method: "POST",
     headers: headers(c),
     body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
   })
-  if (!res.ok) throw new Error(`script agent failed: ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 429 ? "script agent rate-limited (429) — retries exhausted, wait a bit and try again" : `script agent failed: ${res.status}`)
   return parseChatResponse(res)
 }
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
 export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetch(`${CLEAN(c)}/v1/video/generations`, {
+  const res = await fetchRetry(`${CLEAN(c)}/v1/video/generations`, {
     method: "POST",
     headers: headers(c),
     body: JSON.stringify({ model: c.model, prompt }),
@@ -90,7 +108,7 @@ export async function runVideo(c: AgentConfig, prompt: string): Promise<string> 
 
 // text-to-speech — returns audio blob URL
 export async function runTts(c: AgentConfig, text: string): Promise<string> {
-  const res = await fetch(`${CLEAN(c)}/v1/audio/speech`, {
+  const res = await fetchRetry(`${CLEAN(c)}/v1/audio/speech`, {
     method: "POST",
     headers: headers(c),
     body: JSON.stringify({ model: c.model, input: text }),
@@ -156,7 +174,7 @@ export async function runVision(
     })
   }
 
-  const res = await fetch(`${CLEAN(c)}/v1/chat/completions`, {
+  const res = await fetchRetry(`${CLEAN(c)}/v1/chat/completions`, {
     method: "POST",
     headers: headers(c),
     body: JSON.stringify({

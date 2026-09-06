@@ -8,10 +8,21 @@ function headers(c: AgentConfig): HeadersInit {
 }
 
 // fetch with auto-retry on 429/5xx — respects Retry-After, backs off exponentially.
-async function fetchRetry(input: string, init: RequestInit, tries = 3): Promise<Response> {
+// Network-level failures ("Failed to fetch") are NOT retried — they are explained instead:
+// wrong URL, offline, or CORS (endpoint refuses browser requests).
+async function fetchRetry(input: string, init: RequestInit, tries = 3, timeoutMs = 60_000): Promise<Response> {
   let last: Response | null = null
   for (let attempt = 0; attempt < tries; attempt++) {
-    const res = await fetch(input, init)
+    let res: Response
+    try {
+      res = await fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+    } catch (e) {
+      if ((e as Error).name === "TimeoutError") throw new Error("endpoint timed out — it accepted the request but never answered")
+      throw new Error(
+        `Failed to reach endpoint (${(e as Error).message}). Check: 1) base URL is correct and reachable, 2) your internet, ` +
+          `3) CORS — the endpoint must send Access-Control-Allow-Origin for browser apps; if it doesn't, use a CORS proxy or server-side endpoint`
+      )
+    }
     if (res.status !== 429 && res.status < 500) return res
     last = res
     if (attempt < tries - 1) {

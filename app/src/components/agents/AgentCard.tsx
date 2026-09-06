@@ -17,6 +17,7 @@ export function AgentCard({ agent, config, onSave, status }: Props) {
   const [apiKey, setApiKey] = useState(config?.apiKey ?? "")
   const [model, setModel] = useState(config?.model ?? "")
   const [models, setModels] = useState<string[]>(config?.models ?? [])
+  const [videoPath, setVideoPath] = useState(config?.videoPath ?? "")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,7 +33,7 @@ export function AgentCard({ agent, config, onSave, status }: Props) {
       // Keep prior pick if still valid, else first capability-matching model
       const keep = filtered.includes(model) ? model : filtered[0] ?? ""
       setModel(keep)
-      onSave({ baseUrl, apiKey, model: keep, models: filtered })
+      onSave({ baseUrl, apiKey, model: keep, models: filtered, videoPath: videoPath || undefined })
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -42,7 +43,7 @@ export function AgentCard({ agent, config, onSave, status }: Props) {
 
   const pick = (m: string) => {
     setModel(m)
-    onSave({ baseUrl, apiKey, model: m, models })
+    onSave({ baseUrl, apiKey, model: m, models, videoPath: videoPath || undefined })
   }
 
   return (
@@ -105,6 +106,14 @@ export function AgentCard({ agent, config, onSave, status }: Props) {
             placeholder="API key (stays in your browser)"
             className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring/40"
           />
+          {agent.capability === "text-to-video" && (
+            <input
+              value={videoPath}
+              onChange={(e) => setVideoPath(e.target.value)}
+              placeholder="Video endpoint path (default /v1/video/generations)"
+              className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring/40"
+            />
+          )}
           <button
             type="button"
             onClick={saveAndFetch}

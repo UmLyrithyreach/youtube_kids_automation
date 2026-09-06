@@ -7,6 +7,7 @@ export interface AgentConfig {
   apiKey: string
   model: string
   models: string[] // fetched from endpoint
+  videoPath?: string // full endpoint path for video generation (video agent only)
 }
 
 export type AgentId = "script" | "video" | "tts" | "monitor" | "vision"

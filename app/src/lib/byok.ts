@@ -131,15 +131,34 @@ export async function runScript(c: AgentConfig, prompt: string): Promise<string>
 }
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
+// Path is user-configurable because providers disagree: OpenAI-style /v1/video/generations,
+// Google Veo /v1/projects/...:predictLongRunning, Replicate /v1/predictions, etc.
 export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
+  const path = c.videoPath?.trim() || "/v1/video/generations"
+  const target = `${CLEAN(c)}${path.startsWith("/") ? path : `/${path}`}`
   const res = await fetchRetry(endpointUrl(), {
     method: "POST",
-    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/video/generations` },
-    body: JSON.stringify({ model: c.model, prompt }),
+    headers: { ...headers(c), "x-target-url": target },
+    body: JSON.stringify({ model: c.model, prompt, instances: [{ prompt }] }),
   })
-  if (!res.ok) throw new Error(`video agent failed: ${res.status}`)
-  const data = (await jsonOrExplain(res)) as { data?: { url?: string }[]; url?: string; video?: { url?: string } }
-  const url = data?.data?.[0]?.url ?? data?.url ?? data?.video?.url
+  if (!res.ok) throw new Error(`video agent failed: ${res.status} at ${path}`)
+  const data = (await jsonOrExplain(res)) as {
+    data?: { url?: string; video?: { url?: string } }[]
+    url?: string
+    video?: { url?: string }
+    predictions?: { videoUrl?: string }[]
+    output?: string | string[]
+    videos?: { url?: string }[]
+  }
+  // Response shapes vary wildly across video providers; dig through common ones.
+  const url =
+    data?.data?.[0]?.url ??
+    data?.data?.[0]?.video?.url ??
+    data?.url ??
+    data?.video?.url ??
+    data?.videos?.[0]?.url ??
+    data?.predictions?.[0]?.videoUrl ??
+    (typeof data?.output === "string" ? data.output : data?.output?.[0])
   if (typeof url !== "string") throw new Error("no video URL in response (capability mismatch?)")
   return url
 }

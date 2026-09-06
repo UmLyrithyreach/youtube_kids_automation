@@ -3,6 +3,12 @@ import type { AgentConfig, Capability } from "./agents"
 
 const CLEAN = (c: AgentConfig) => c.baseUrl.replace(/\/+$/, "")
 
+// All endpoint calls go through the dev-server CORS proxy (/cors-proxy/*,
+// target passed via header) so endpoints that don't send CORS headers work.
+function endpointUrl(c: AgentConfig, path: string): string {
+  return `/cors-proxy${CLEAN(c)}${path}`
+}
+
 function headers(c: AgentConfig): HeadersInit {
   return { "Content-Type": "application/json", Authorization: `Bearer ${c.apiKey}` }
 }
@@ -65,7 +71,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
 }
 
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
-  const res = await fetchRetry(`${CLEAN(c)}/v1/models`, { headers: headers(c) })
+  const res = await fetchRetry(endpointUrl(c, "/v1/models"), { headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/models` } })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
   const data = await res.json()
   const list = Array.isArray(data) ? data : (data.data ?? data.models ?? [])
@@ -94,9 +100,9 @@ export async function probeAgent(capability: Capability, c: AgentConfig | null):
 
 // text-to-text — OpenAI-compatible chat completions
 export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetchRetry(`${CLEAN(c)}/v1/chat/completions`, {
+  const res = await fetchRetry(endpointUrl(c, "/v1/chat/completions"), {
     method: "POST",
-    headers: headers(c),
+    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
     body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
   })
   if (!res.ok) throw new Error(res.status === 429 ? "script agent rate-limited (429) — retries exhausted, wait a bit and try again" : `script agent failed: ${res.status}`)
@@ -105,9 +111,9 @@ export async function runScript(c: AgentConfig, prompt: string): Promise<string>
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
 export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetchRetry(`${CLEAN(c)}/v1/video/generations`, {
+  const res = await fetchRetry(endpointUrl(c, "/v1/video/generations"), {
     method: "POST",
-    headers: headers(c),
+    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/video/generations` },
     body: JSON.stringify({ model: c.model, prompt }),
   })
   if (!res.ok) throw new Error(`video agent failed: ${res.status}`)
@@ -119,9 +125,9 @@ export async function runVideo(c: AgentConfig, prompt: string): Promise<string> 
 
 // text-to-speech — returns audio blob URL
 export async function runTts(c: AgentConfig, text: string): Promise<string> {
-  const res = await fetchRetry(`${CLEAN(c)}/v1/audio/speech`, {
+  const res = await fetchRetry(endpointUrl(c, "/v1/audio/speech"), {
     method: "POST",
-    headers: headers(c),
+    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/audio/speech` },
     body: JSON.stringify({ model: c.model, input: text }),
   })
   if (!res.ok) throw new Error(`TTS agent failed: ${res.status}`)
@@ -185,9 +191,9 @@ export async function runVision(
     })
   }
 
-  const res = await fetchRetry(`${CLEAN(c)}/v1/chat/completions`, {
+  const res = await fetchRetry(endpointUrl(c, "/v1/chat/completions"), {
     method: "POST",
-    headers: headers(c),
+    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
     body: JSON.stringify({
       model: c.model,
       messages: [{ role: "user", content }],

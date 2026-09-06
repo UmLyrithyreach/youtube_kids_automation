@@ -8,7 +8,22 @@ function normalizeBase(baseUrl: string): string {
   return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed
 }
 
-const CLEAN = (c: AgentConfig) => normalizeBase(c.baseUrl)
+// CLEAN adds /v1/... paths after the base. But Google's OpenAI-compat layer
+// already ends in /openai and wants /chat/completions directly after it.
+function CLEAN(c: AgentConfig): string {
+  return normalizeBase(c.baseUrl)
+}
+
+// Build the full endpoint target for an OpenAI-style path, honoring the
+// Google compat layer (…/v1beta/openai/chat/completions, no /v1 segment).
+function targetFor(c: AgentConfig, path: string): string {
+  const base = CLEAN(c)
+  if (/\/openai$/.test(base)) {
+    // Google OpenAI-compat: base already includes the version root
+    return `${base}${path.replace(/^\/v1/, "")}`
+  }
+  return `${base}${path}`
+}
 
 // All endpoint calls go through the dev-server CORS proxy (/cors-proxy/,
 // real URL passed via x-target-url header) so endpoints that don't send
@@ -92,7 +107,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
 }
 
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
-  const res = await fetchRetry(endpointUrl(), { headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/models` } })
+  const res = await fetchRetry(endpointUrl(), { headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/models") } })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
   const data = await jsonOrExplain(res)
   const list = Array.isArray(data) ? data : (data.data ?? data.models ?? [])
@@ -123,7 +138,7 @@ export async function probeAgent(capability: Capability, c: AgentConfig | null):
 export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
   const res = await fetchRetry(endpointUrl(), {
     method: "POST",
-    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
+    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
     body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
   })
   if (!res.ok) throw new Error(res.status === 429 ? "script agent rate-limited (429) — retries exhausted, wait a bit and try again" : `script agent failed: ${res.status}`)
@@ -132,10 +147,14 @@ export async function runScript(c: AgentConfig, prompt: string): Promise<string>
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
 // Path is user-configurable because providers disagree: OpenAI-style /v1/video/generations,
-// Google Veo /v1/projects/...:predictLongRunning, Replicate /v1/predictions, etc.
+// Google Veo /v1/.../models/veo-...:predictLongRunning, Replicate /v1/predictions, etc.
 export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
   const path = c.videoPath?.trim() || "/v1/video/generations"
-  const target = `${CLEAN(c)}${path.startsWith("/") ? path : `/${path}`}`
+  const target = targetFor(c, path)
+  if (target.includes("generativelanguage.googleapis.com") || target.includes("aiplatform.googleapis.com")) {
+    return runVeoGoogle(c, prompt, target)
+  }
+
   const res = await fetchRetry(endpointUrl(), {
     method: "POST",
     headers: { ...headers(c), "x-target-url": target },
@@ -163,11 +182,47 @@ export async function runVideo(c: AgentConfig, prompt: string): Promise<string> 
   return url
 }
 
+// Google Generative Language API (Veo): POST {model}:predictLongRunning →
+// poll operation → fetch video bytes with the file URI + API key as query.
+async function runVeoGoogle(c: AgentConfig, prompt: string, target: string): Promise<string> {
+  // target like https://generativelanguage.googleapis.com/v1beta/openai + user path (default /v1/video/generations)
+  const root = target.split("/openai")[0] // https://generativelanguage.googleapis.com/v1beta
+  const model = c.model.replace(/^models\//, "")
+  const startUrl = `${root}/models/${model}:predictLongRunning`
+
+  const startRes = await fetchRetry(endpointUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": c.apiKey, "x-target-url": startUrl },
+    body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: "16:9" } }),
+  })
+  if (!startRes.ok) throw new Error(`video agent failed: ${startRes.status} at ${model}:predictLongRunning`)
+  const startData = (await jsonOrExplain(startRes)) as { name?: string }
+  const opName = startData?.name
+  if (typeof opName !== "string") throw new Error("Veo did not return an operation name")
+
+  // Poll the operation (up to ~5 min, video gen is slow)
+  const opUrl = `${root}/${opName}`
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 5000))
+    const opRes = await fetchRetry(endpointUrl(), {
+      headers: { "x-goog-api-key": c.apiKey, "x-target-url": opUrl },
+    })
+    if (!opRes.ok) throw new Error(`video agent failed: ${opRes.status} while polling operation`)
+    const op = (await jsonOrExplain(opRes)) as { done?: boolean; response?: { generateVideoResponse?: { generatedSamples?: { video?: { uri?: string } }[] } } }
+    if (!op?.done) continue
+    const uri = op?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
+    if (typeof uri !== "string") throw new Error("no video URI in Veo response (capability mismatch?)")
+    // file URI needs the key appended to download
+    return `${uri}${uri.includes("?") ? "&" : "?"}key=${encodeURIComponent(c.apiKey)}`
+  }
+  throw new Error("Veo operation timed out after 5 minutes")
+}
+
 // text-to-speech — returns audio blob URL
 export async function runTts(c: AgentConfig, text: string): Promise<string> {
   const res = await fetchRetry(endpointUrl(), {
     method: "POST",
-    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/audio/speech` },
+    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/audio/speech") },
     body: JSON.stringify({ model: c.model, input: text }),
   })
   if (!res.ok) throw new Error(`TTS agent failed: ${res.status}`)
@@ -233,7 +288,7 @@ export async function runVision(
 
   const res = await fetchRetry(endpointUrl(), {
     method: "POST",
-    headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
+    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
     body: JSON.stringify({
       model: c.model,
       messages: [{ role: "user", content }],

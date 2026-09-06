@@ -10,10 +10,11 @@ function normalizeBase(baseUrl: string): string {
 
 const CLEAN = (c: AgentConfig) => normalizeBase(c.baseUrl)
 
-// All endpoint calls go through the dev-server CORS proxy (/cors-proxy/*,
-// target passed via header) so endpoints that don't send CORS headers work.
-function endpointUrl(c: AgentConfig, path: string): string {
-  return `/cors-proxy${CLEAN(c)}${path}`
+// All endpoint calls go through the dev-server CORS proxy (/cors-proxy/,
+// real URL passed via x-target-url header) so endpoints that don't send
+// CORS headers work. Path is always /cors-proxy/ — target in header only.
+function endpointUrl(): string {
+  return "/cors-proxy/"
 }
 
 function headers(c: AgentConfig): HeadersInit {
@@ -91,7 +92,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
 }
 
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
-  const res = await fetchRetry(endpointUrl(c, "/v1/models"), { headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/models` } })
+  const res = await fetchRetry(endpointUrl(), { headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/models` } })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
   const data = await jsonOrExplain(res)
   const list = Array.isArray(data) ? data : (data.data ?? data.models ?? [])
@@ -120,7 +121,7 @@ export async function probeAgent(capability: Capability, c: AgentConfig | null):
 
 // text-to-text — OpenAI-compatible chat completions
 export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetchRetry(endpointUrl(c, "/v1/chat/completions"), {
+  const res = await fetchRetry(endpointUrl(), {
     method: "POST",
     headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
     body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
@@ -131,7 +132,7 @@ export async function runScript(c: AgentConfig, prompt: string): Promise<string>
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
 export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetchRetry(endpointUrl(c, "/v1/video/generations"), {
+  const res = await fetchRetry(endpointUrl(), {
     method: "POST",
     headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/video/generations` },
     body: JSON.stringify({ model: c.model, prompt }),
@@ -145,7 +146,7 @@ export async function runVideo(c: AgentConfig, prompt: string): Promise<string> 
 
 // text-to-speech — returns audio blob URL
 export async function runTts(c: AgentConfig, text: string): Promise<string> {
-  const res = await fetchRetry(endpointUrl(c, "/v1/audio/speech"), {
+  const res = await fetchRetry(endpointUrl(), {
     method: "POST",
     headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/audio/speech` },
     body: JSON.stringify({ model: c.model, input: text }),
@@ -211,7 +212,7 @@ export async function runVision(
     })
   }
 
-  const res = await fetchRetry(endpointUrl(c, "/v1/chat/completions"), {
+  const res = await fetchRetry(endpointUrl(), {
     method: "POST",
     headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/chat/completions` },
     body: JSON.stringify({

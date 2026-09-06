@@ -7,6 +7,34 @@ function headers(c: AgentConfig): HeadersInit {
   return { "Content-Type": "application/json", Authorization: `Bearer ${c.apiKey}` }
 }
 
+// Parse a chat-completions response that may be plain JSON or an SSE stream
+// (many endpoints force `stream: true` regardless of what we ask for).
+export async function parseChatResponse(res: Response): Promise<string> {
+  const ct = res.headers.get("content-type") ?? ""
+  if (ct.includes("text/event-stream")) {
+    const raw = await res.text()
+    let out = ""
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith("data:")) continue
+      const payload = trimmed.slice(5).trim()
+      if (!payload || payload === "[DONE]") continue
+      try {
+        const j = JSON.parse(payload)
+        const delta = j?.choices?.[0]?.delta?.content ?? j?.choices?.[0]?.message?.content
+        if (typeof delta === "string") out += delta
+      } catch {
+        // ignore malformed chunks
+      }
+    }
+    return out
+  }
+  const data = await res.json()
+  const text = data?.choices?.[0]?.message?.content
+  if (typeof text !== "string") throw new Error("unexpected chat response shape")
+  return text
+}
+
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
   const res = await fetch(`${CLEAN(c)}/v1/models`, { headers: headers(c) })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
@@ -40,13 +68,10 @@ export async function runScript(c: AgentConfig, prompt: string): Promise<string>
   const res = await fetch(`${CLEAN(c)}/v1/chat/completions`, {
     method: "POST",
     headers: headers(c),
-    body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
   })
   if (!res.ok) throw new Error(`script agent failed: ${res.status}`)
-  const data = await res.json()
-  const text = data?.choices?.[0]?.message?.content
-  if (typeof text !== "string") throw new Error("unexpected script response shape")
-  return text
+  return parseChatResponse(res)
 }
 
 // text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
@@ -137,11 +162,9 @@ export async function runVision(
     body: JSON.stringify({
       model: c.model,
       messages: [{ role: "user", content }],
+      stream: false,
     }),
   })
   if (!res.ok) throw new Error(`vision agent failed: ${res.status}`)
-  const data = await res.json()
-  const text = data?.choices?.[0]?.message?.content
-  if (typeof text !== "string") throw new Error("unexpected vision response shape")
-  return text
+  return parseChatResponse(res)
 }

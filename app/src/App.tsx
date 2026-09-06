@@ -1,6 +1,7 @@
 import { Clapperboard, ShieldCheck, Download, Play, Loader2 } from "lucide-react"
 import { PromptInput } from "@/components/ui/ai-chat-input"
 import { AgentCard } from "@/components/agents/AgentCard"
+import { AgentFlow } from "@/components/agents/AgentFlow"
 import { AGENTS } from "@/lib/agents"
 import { useStudio } from "@/lib/pipeline"
 
@@ -44,6 +45,9 @@ export default function App() {
             placeholder="Ask for a movie… (e.g. a bunny who builds a rocket)"
           />
         </div>
+
+        {/* Live agent graph — colored cursors hop between agents as they work */}
+        {studio.stage !== "idle" && <AgentFlow stage={studio.stage} done={studio.stage === "done"} />}
 
         {/* Pipeline status */}
         {studio.stage !== "idle" && (

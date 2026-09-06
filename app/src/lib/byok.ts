@@ -1,7 +1,14 @@
 // BYOK API layer — talks only to user-configured endpoints. Keys never logged.
 import type { AgentConfig, Capability } from "./agents"
 
-const CLEAN = (c: AgentConfig) => c.baseUrl.replace(/\/+$/, "")
+// Normalize base URL: trim slashes, de-duplicate /v1 (user may paste
+// https://host/v1 or https://host — we always append /v1/... paths).
+function normalizeBase(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "")
+  return trimmed.endsWith("/v1") ? trimmed.slice(0, -3) : trimmed
+}
+
+const CLEAN = (c: AgentConfig) => normalizeBase(c.baseUrl)
 
 // All endpoint calls go through the dev-server CORS proxy (/cors-proxy/*,
 // target passed via header) so endpoints that don't send CORS headers work.
@@ -42,6 +49,19 @@ async function fetchRetry(input: string, init: RequestInit, tries = 3, timeoutMs
   return last!
 }
 
+// res.json() with clear error when endpoint returns HTML (404 page, login page).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function jsonOrExplain(res: Response): Promise<any> {
+  const ct = (res.headers.get("content-type") ?? "").toLowerCase()
+  if (ct.includes("text/html") || ct === "") {
+    const snippet = (await res.text()).slice(0, 120).replace(/\s+/g, " ")
+    throw new Error(
+      `endpoint returned HTML instead of JSON (HTTP ${res.status}) — usually a wrong base URL/404 page. Got: "${snippet}"`
+    )
+  }
+  return res.json()
+}
+
 // Parse a chat-completions response that may be plain JSON or an SSE stream
 // (many endpoints force `stream: true` regardless of what we ask for).
 export async function parseChatResponse(res: Response): Promise<string> {
@@ -64,7 +84,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
     }
     return out
   }
-  const data = await res.json()
+  const data = await jsonOrExplain(res)
   const text = data?.choices?.[0]?.message?.content
   if (typeof text !== "string") throw new Error("unexpected chat response shape")
   return text
@@ -73,7 +93,7 @@ export async function parseChatResponse(res: Response): Promise<string> {
 export async function fetchModels(c: AgentConfig): Promise<string[]> {
   const res = await fetchRetry(endpointUrl(c, "/v1/models"), { headers: { ...headers(c), "x-target-url": `${CLEAN(c)}/v1/models` } })
   if (!res.ok) throw new Error(`GET /v1/models failed: ${res.status}`)
-  const data = await res.json()
+  const data = await jsonOrExplain(res)
   const list = Array.isArray(data) ? data : (data.data ?? data.models ?? [])
   return list
     .map((m: unknown) => (typeof m === "string" ? m : ((m as { id?: string; name?: string })?.id ?? (m as { name?: string })?.name ?? "")))
@@ -117,7 +137,7 @@ export async function runVideo(c: AgentConfig, prompt: string): Promise<string> 
     body: JSON.stringify({ model: c.model, prompt }),
   })
   if (!res.ok) throw new Error(`video agent failed: ${res.status}`)
-  const data = await res.json()
+  const data = (await jsonOrExplain(res)) as { data?: { url?: string }[]; url?: string; video?: { url?: string } }
   const url = data?.data?.[0]?.url ?? data?.url ?? data?.video?.url
   if (typeof url !== "string") throw new Error("no video URL in response (capability mismatch?)")
   return url

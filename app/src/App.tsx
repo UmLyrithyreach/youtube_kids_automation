@@ -7,12 +7,13 @@ import { useStudio } from "@/lib/pipeline"
 export default function App() {
   const studio = useStudio()
 
-  const handleSend = (message: string) => {
-    studio.makeMovie(message)
+  const handleSend = (message: string, meta: { attachments: File[] }) => {
+    studio.makeMovie(message, meta.attachments)
   }
 
   const stageLabel: Record<string, string> = {
     idle: "",
+    vision: "Analyzing attachments…",
     script: "Writing script…",
     video: "Generating video…",
     tts: "Recording voice…",

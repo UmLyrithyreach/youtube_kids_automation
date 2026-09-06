@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react"
 import { loadConfigs, saveConfigs, AGENTS, type AgentConfig, type AgentId } from "./agents"
-import { probeAgent, runScript, runVideo, runTts } from "./byok"
+import { probeAgent, runScript, runVideo, runTts, runVision, extractFileText } from "./byok"
 
-export type Stage = "idle" | "script" | "video" | "tts" | "done" | "error"
+export type Stage = "idle" | "vision" | "script" | "video" | "tts" | "done" | "error"
 
 export interface MonitorFinding {
   agent: string
@@ -51,17 +51,35 @@ export function useStudio() {
     setProbing(false)
   }, [configs])
 
-  // Full movie pipeline: idea -> script -> video -> TTS -> deliverable
+  // Full movie pipeline: attachments -> vision context -> script -> video -> TTS -> deliverable
   const makeMovie = useCallback(
-    async (idea: string) => {
+    async (idea: string, attachments: File[] = []) => {
       setDeliverable(null)
       setStageError(null)
       try {
-        const { script: cs, video: cv, tts: ct } = configs
+        const { script: cs, video: cv, tts: ct, vision: cvis } = configs
         if (!cs || !cv || !ct) throw new Error("Configure Script, Video and TTS agents first (gear icon on each card)")
 
+        // Vision pre-step: the Vision agent explains attached images/files for the other agents.
+        let context = ""
+        if (attachments.length > 0 && cvis) {
+          setStage("vision")
+          context = await runVision(cvis, attachments, idea)
+        } else if (attachments.length > 0 && !cvis) {
+          // No vision agent configured — extract text locally so texty files still count.
+          const parts: string[] = []
+          for (const f of attachments) {
+            const t = await extractFileText(f)
+            if (t) parts.push(`--- ${f.name} ---\n${t}`)
+          }
+          context = parts.join("\n\n")
+        }
+
         setStage("script")
-        const s = await runScript(cs, `Write a short, kid-friendly YouTube movie script (max 300 words) about: ${idea}`)
+        const prompt = context
+          ? `${idea}\n\nContext from user's attached files/images (described by the Vision agent):\n${context.slice(0, 4000)}`
+          : idea
+        const s = await runScript(cs, `Write a short, kid-friendly YouTube movie script (max 300 words) about: ${prompt}`)
         setScript(s)
 
         setStage("video")

@@ -16,10 +16,11 @@ const SMOOTH_HEIGHT_TRANSITION = "max-width 0.4s cubic-bezier(0.175, 0.885, 0.32
 interface Attachment {
   id: string;
   file: File;
-  url: string;
+  url: string; // object URL for images, "" for non-image files
   name: string;
   width?: number;
   height?: number;
+  isImage: boolean;
 }
 
 // ----------------------------------------------------------------------
@@ -97,7 +98,7 @@ function AttachmentThumb({
       onMouseLeave={() => setIsHovered(false)}
       onClick={(e) => {
         e.stopPropagation();
-        if (btnRef.current) {
+        if (btnRef.current && attachment.isImage) {
           onOpen(attachment, btnRef.current.getBoundingClientRect());
         }
       }}
@@ -109,7 +110,14 @@ function AttachmentThumb({
       )}
       aria-label={`Open preview of ${attachment.name}`}
     >
-      <img src={attachment.url} alt={attachment.name} className="size-full object-cover" draggable={false} />
+      {attachment.isImage ? (
+        <img src={attachment.url} alt={attachment.name} className="size-full object-cover" draggable={false} />
+      ) : (
+        <span className="flex size-full flex-col items-center justify-center bg-accent/40 px-0.5 text-center">
+          <span className="w-full truncate text-[9px] font-semibold text-foreground/80">{attachment.name}</span>
+          <span className="text-[8px] uppercase text-muted-foreground">{attachment.file.type.split("/")[1] || "file"}</span>
+        </span>
+      )}
       <span className={cn("absolute inset-0 flex items-start justify-end bg-black/0 transition-colors duration-200", isHovered && "bg-black/25")}>
         <span
           role="button" tabIndex={-1}
@@ -472,7 +480,7 @@ export const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
     useEffect(() => {
       return () => {
         stopRecording();
-        attachments.forEach((a) => URL.revokeObjectURL(a.url)); 
+        attachments.forEach((a) => a.url && URL.revokeObjectURL(a.url)); 
       };
     }, [stopRecording, attachments]);
 
@@ -539,7 +547,7 @@ export const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
       setIsSmoothResize(false);
       onSubmit?.(value, { attachments: attachments.map((a) => a.file) });
       handleValueChange("");
-      attachments.forEach((a) => URL.revokeObjectURL(a.url));
+      attachments.forEach((a) => a.url && URL.revokeObjectURL(a.url));
       setAttachments([]);
       setExpanded(false);
     };
@@ -550,28 +558,33 @@ export const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
     };
 
     const handleFilesChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
-      e.target.value = ""; 
+      const files = Array.from(e.target.files ?? []);
+      e.target.value = "";
 
       if (files.length === 0) return;
       const room = Math.max(0, maxAttachments - attachments.length);
       const accepted = files.slice(0, room);
 
-      if (!expanded) { setIsSmoothResize(false); setExpanded(true); } 
+      if (!expanded) { setIsSmoothResize(false); setExpanded(true); }
       else { setIsSmoothResize(true); }
 
       for (const file of accepted) {
-        const url = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = () => addAttachment(file, url, img.naturalWidth, img.naturalHeight);
-        img.onerror = () => addAttachment(file, url, 800, 600);
-        img.src = url;
+        const isImage = file.type.startsWith("image/");
+        const id = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`;
+        if (isImage) {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => addAttachment(file, url, id, isImage, img.naturalWidth, img.naturalHeight);
+          img.onerror = () => addAttachment(file, url, id, isImage, 800, 600);
+          img.src = url;
+        } else {
+          addAttachment(file, "", id, isImage);
+        }
       }
     };
 
-    const addAttachment = (file: File, url: string, width: number, height: number) => {
-      const id = `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`;
-      setAttachments((prev) => [...prev, { id, file, url, name: file.name, width, height }]);
+    const addAttachment = (file: File, url: string, id: string, isImage: boolean, width?: number, height?: number) => {
+      setAttachments((prev) => [...prev, { id, file, url, name: file.name, width, height, isImage }]);
     };
 
     const removeAttachment = (id: string) => {
@@ -620,7 +633,6 @@ export const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
             multiple
             onChange={handleFilesChosen}
             className="hidden"

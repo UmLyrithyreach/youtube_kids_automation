@@ -75,3 +75,73 @@ export async function runTts(c: AgentConfig, text: string): Promise<string> {
   if (!blob.type.startsWith("audio")) throw new Error("response is not audio (capability mismatch?)")
   return URL.createObjectURL(blob)
 }
+
+// ---------------------------------------------------------------------------
+// Vision agent: explains attachments for the other agents
+// ---------------------------------------------------------------------------
+
+// Client-side text extraction for texty files — no server round trip needed.
+export async function extractFileText(file: File): Promise<string> {
+  const texty = /^(text\/|application\/(json|xml|javascript|x-yaml|toml|x-sh))/.test(file.type) ||
+    /\.(md|txt|json|csv|tsv|xml|yml|yaml|toml|html|css|js|jsx|ts|tsx|py|rb|go|rs|java|c|cpp|h|sh|sql|env|ini|log)$/i.test(file.name)
+  if (!texty) return ""
+  const text = await file.text()
+  return text.slice(0, 12000) // cap context
+}
+
+// fileToBase64 for vision payload
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(new Error(`could not read ${file.name}`))
+    r.readAsDataURL(file)
+  })
+}
+
+// Vision: describe images (OpenAI-compatible multimodal) + summarize attached text files.
+export async function runVision(
+  c: AgentConfig,
+  files: File[],
+  userPrompt: string
+): Promise<string> {
+  const images = files.filter((f) => f.type.startsWith("image/"))
+  const textParts: string[] = []
+
+  for (const f of files) {
+    const t = await extractFileText(f)
+    if (t) textParts.push(`--- file: ${f.name} ---\n${t}`)
+  }
+  if (images.length === 0 && textParts.length === 0) return ""
+
+  const content: unknown[] = []
+  if (images.length > 0) {
+    content.push({
+      type: "text",
+      text: `The user attached ${images.length} image(s)${files.length - images.length > 0 ? ` and ${files.length - images.length} non-image file(s) (their text content is included below)` : ""} while asking: "${userPrompt}". Describe in detail everything visible/important in the attached images that the other AI agents (script writer, video generator, TTS) would need to know.`,
+    })
+    for (const img of images) {
+      content.push({ type: "image_url", image_url: { url: await fileToDataUrl(img) } })
+    }
+  }
+  if (textParts.length > 0) {
+    content.push({
+      type: "text",
+      text: `Attached file contents:\n${textParts.join("\n\n")}\n\nSummarize the key information from these files relevant to: "${userPrompt}".`,
+    })
+  }
+
+  const res = await fetch(`${CLEAN(c)}/v1/chat/completions`, {
+    method: "POST",
+    headers: headers(c),
+    body: JSON.stringify({
+      model: c.model,
+      messages: [{ role: "user", content }],
+    }),
+  })
+  if (!res.ok) throw new Error(`vision agent failed: ${res.status}`)
+  const data = await res.json()
+  const text = data?.choices?.[0]?.message?.content
+  if (typeof text !== "string") throw new Error("unexpected vision response shape")
+  return text
+}

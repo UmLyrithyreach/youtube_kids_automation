@@ -1,6 +1,6 @@
 // Agent definitions + BYOK config storage (localStorage, keys stay in browser)
 
-export type Capability = "text-to-text" | "text-to-video" | "text-to-speech" | "monitor"
+export type Capability = "text-to-text" | "text-to-video" | "text-to-speech" | "monitor" | "vision"
 
 export interface AgentConfig {
   baseUrl: string
@@ -9,7 +9,7 @@ export interface AgentConfig {
   models: string[] // fetched from endpoint
 }
 
-export type AgentId = "script" | "video" | "tts" | "monitor"
+export type AgentId = "script" | "video" | "tts" | "monitor" | "vision"
 
 export interface AgentDef {
   id: AgentId
@@ -23,6 +23,7 @@ export const AGENTS: AgentDef[] = [
   { id: "script", name: "Script Writer", description: "Turns the movie idea into a shooting script", capability: "text-to-text" },
   { id: "video", name: "Video Generator", description: "Generates video clips from script (keyframe image fallback)", capability: "text-to-video", acceptsImages: true },
   { id: "tts", name: "Voice (TTS)", description: "Narrates the script", capability: "text-to-speech" },
+  { id: "vision", name: "Vision Analyst", description: "Describes attached images/files for the other agents", capability: "vision" },
   { id: "monitor", name: "Monitor", description: "Self-checks the other agents for config/capability mismatches", capability: "monitor" },
 ]
 
@@ -35,7 +36,7 @@ export function loadConfigs(): Record<AgentId, AgentConfig | null> {
   } catch {
     // corrupted store — start fresh
   }
-  return { script: null, video: null, tts: null, monitor: null }
+  return { script: null, video: null, tts: null, monitor: null, vision: null }
 }
 
 export function saveConfigs(configs: Record<AgentId, AgentConfig | null>) {
@@ -49,6 +50,7 @@ export function filterModelsByCapability(models: string[], capability: Capabilit
     "text-to-text": ["gpt", "claude", "glm", "gemini", "text", "chat", "llama", "mistral", "deepseek", "qwen", "grok", "opus", "sonnet", "haiku"],
     "text-to-video": ["video", "sora", "veo", "kling", "runway", "pika", "luma", "wan", "cosmos", "animate", "moviegen", "seedance", "hunyuan-video", "movi"],
     "text-to-speech": ["tts", "speech", "voice", "audio", "eleven", "piper", "kokoro", "espeak", "festival", "vits", "bark"],
+    vision: ["vision", "vlm", "gpt", "gemini", "claude", "glm", "llava", "qwen-vl", "4o", "4.1", "opus", "sonnet", "pixtral", "molmo", "internvl"],
     monitor: all, // monitor accepts anything (it probes)
   }
   const hits = all.filter((m) => kw[capability].some((k) => m.toLowerCase().includes(k)))

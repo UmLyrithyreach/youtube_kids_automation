@@ -282,6 +282,20 @@ function fallbackCharData(userPrompt: string): {
   }
 }
 
+// Manual mode prompt writer: from the user's description, produce the two
+// prompts they paste into their own AI — static portrait + 360° turnaround.
+export function manualPrompts(fullPrompt: string): { portrait: string; turnaround: string } {
+  const charData = fallbackCharData(fullPrompt)
+  const turnaround = build360TurnaroundPrompt({
+    name: charData.name,
+    species: charData.species,
+    role: charData.role,
+    description: charData.description,
+    palette: charData.palette,
+  })
+  return { portrait: charData.frozenPrompt, turnaround }
+}
+
 // Manual mode: the user generated images with their own AI (ChatGPT, Gemini,
 // Midjourney…) and uploads them here — no LLM or image API calls at all.
 export async function createManualCharacter(opts: {

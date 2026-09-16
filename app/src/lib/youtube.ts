@@ -47,6 +47,7 @@ async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
 // this same app URL with ?code=... which handleRedirect() exchanges.
 export async function connectYouTube(clientId: string): Promise<void> {
   if (!clientId.trim()) throw new Error("paste your OAuth Client ID first")
+  if (!crypto?.subtle) throw new Error("OAuth needs a secure context — open the studio on http://localhost:5173, not a LAN IP or file://")
   const { verifier, challenge } = await pkcePair()
   sessionStorage.setItem("yt-pkce-verifier", verifier)
   const redirect = window.location.origin + window.location.pathname

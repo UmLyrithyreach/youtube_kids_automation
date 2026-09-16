@@ -41,13 +41,13 @@ export function YouTubePanel() {
   }, [])
 
   const onConnect = () => {
-    try {
-      saveClientId(clientIdInput)
-      toast.message("Redirecting to Google sign-in…")
-      void connectYouTube(clientIdInput)
-    } catch (e) {
-      toast.error((e as Error).message)
+    if (!clientIdInput.trim()) {
+      toast.error("Paste your OAuth Client ID first — see the numbered steps below the button")
+      return
     }
+    saveClientId(clientIdInput)
+    toast.message("Redirecting to Google sign-in…")
+    connectYouTube(clientIdInput).catch((e: Error) => toast.error(e.message))
   }
 
   const onUpload = async () => {

@@ -103,6 +103,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
   const [manualMode, setManualMode] = useState(false)
   const [manualFiles, setManualFiles] = useState<File[]>([])
   const [manualBusy, setManualBusy] = useState(false)
+  const [manualDrag, setManualDrag] = useState(false)
   const [manualPreview, setManualPreview] = useState<{ portrait: string; turnaround: string } | null>(null)
   const [manualCopied, setManualCopied] = useState<"portrait" | "turnaround" | null>(null)
 
@@ -115,6 +116,17 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
       })),
     [manualFiles]
   )
+
+  // Clipboard paste anywhere in the tab while manual mode is active
+  useEffect(() => {
+    if (!manualMode) return
+    const onPaste = (e: ClipboardEvent) => {
+      const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"))
+      if (files.length) setManualFiles((fs) => [...fs, ...files].slice(0, 2))
+    }
+    window.addEventListener("paste", onPaste)
+    return () => window.removeEventListener("paste", onPaste)
+  }, [manualMode])
 
   const [copied, setCopied] = useState(false)
   const [copiedImage, setCopiedImage] = useState(false)
@@ -746,7 +758,18 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                     </div>
                   ))}
 
-                  <div className="rounded-xl border border-dashed border-amber-400/60 bg-white/60 dark:bg-[#181920] p-3 flex flex-col gap-2.5">
+                  <div
+                    className="rounded-xl border-2 border-dashed border-amber-400/60 bg-white/60 dark:bg-[#181920] p-3 flex flex-col gap-2.5"
+                    onDragOver={(e) => { e.preventDefault(); setManualDrag(true) }}
+                    onDragLeave={() => setManualDrag(false)}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setManualDrag(false)
+                      const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith("image/"))
+                      if (files.length) setManualFiles((fs) => [...fs, ...files].slice(0, 2))
+                    }}
+                    tabIndex={0}
+                  >
                     {manualThumbs.length > 0 && (
                       <div className="flex items-center gap-3">
                         {manualThumbs.map((t, i) => (
@@ -764,14 +787,30 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                         ))}
                       </div>
                     )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      disabled={manualBusy}
-                      onChange={(e) => setManualFiles(Array.from(e.target.files ?? []).slice(0, 2))}
-                      className="text-xs text-zinc-600 dark:text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white file:cursor-pointer"
-                    />
+                    <label
+                      className={cn(
+                        "flex min-h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg text-center transition-all",
+                        manualDrag ? "border-2 border-dashed border-amber-500 bg-amber-500/10" : ""
+                      )}
+                    >
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        disabled={manualBusy}
+                        className="hidden"
+                        onChange={(e) => {
+                          setManualFiles((fs) => [...fs, ...Array.from(e.target.files ?? [])].slice(0, 2))
+                          e.target.value = ""
+                        }}
+                      />
+                      <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                        {manualDrag ? "Drop to add" : "Drop, paste, or click to browse"}
+                      </span>
+                      <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                        {manualThumbs.length < 2 ? "1st image = portrait · 2nd = 360° sheet (paste from your AI with Ctrl+V)" : "Both slots filled — remove one to replace"}
+                      </span>
+                    </label>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
                         {manualFiles.length === 0 ? "No image required — vault entry with prompt only" : manualFiles.length === 1 ? "1 image → portrait" : "2 images → portrait + turnaround sheet"}

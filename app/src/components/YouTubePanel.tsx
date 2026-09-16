@@ -6,7 +6,9 @@ import {
   connectYouTube,
   handleRedirect,
   loadClientId,
+  loadClientSecret,
   saveClientId,
+  saveClientSecret,
   clearAuth,
   uploadVideo,
   type YtAuth,
@@ -20,6 +22,7 @@ export function YouTubePanel() {
   const [auth, setAuth] = useState<YtAuth | null>(null)
   const [booting, setBooting] = useState(true)
   const [clientIdInput, setClientIdInput] = useState(() => loadClientId())
+  const [secretInput, setSecretInput] = useState(() => loadClientSecret())
   const [file, setFile] = useState<File | null>(null)
   const [meta, setMeta] = useState<UploadMeta>({ title: "", description: "", visibility: "public", madeForKids: true })
   const [uploading, setUploading] = useState(false)
@@ -45,7 +48,12 @@ export function YouTubePanel() {
       toast.error("Paste your OAuth Client ID first — see the numbered steps below the button")
       return
     }
+    if (!secretInput.trim()) {
+      toast.error("Paste the client secret too (same Credentials page as the Client ID)")
+      return
+    }
     saveClientId(clientIdInput)
+    saveClientSecret(secretInput)
     toast.message("Redirecting to Google sign-in…")
     connectYouTube(clientIdInput).catch((e: Error) => toast.error(e.message))
   }
@@ -107,6 +115,16 @@ export function YouTubePanel() {
               placeholder="1234-abc.apps.googleusercontent.com"
               value={clientIdInput}
               onChange={(e) => setClientIdInput(e.target.value)}
+            />
+          </label>
+          <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            Client secret
+            <input
+              type="password"
+              className={inputCls + " mt-1.5 font-mono"}
+              placeholder="GOCSPX-…"
+              value={secretInput}
+              onChange={(e) => setSecretInput(e.target.value)}
             />
           </label>
           <button

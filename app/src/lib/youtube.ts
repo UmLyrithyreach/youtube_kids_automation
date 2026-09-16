@@ -4,6 +4,7 @@
 import { loadChannelInfo } from "./youtubeTypes"
 const AUTH_KEY = "yt-kids-youtube-v1"
 const CLIENT_KEY = "yt-kids-youtube-clientid"
+const SECRET_KEY = "yt-kids-youtube-clientsecret"
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
   "https://www.googleapis.com/auth/youtube.readonly",
@@ -29,6 +30,14 @@ export function loadClientId(): string {
 
 export function saveClientId(id: string): void {
   localStorage.setItem(CLIENT_KEY, id.trim())
+}
+
+export function loadClientSecret(): string {
+  return localStorage.getItem(SECRET_KEY) ?? ""
+}
+
+export function saveClientSecret(secret: string): void {
+  localStorage.setItem(SECRET_KEY, secret.trim())
 }
 
 function b64url(bytes: Uint8Array): string {
@@ -71,6 +80,8 @@ interface Tokens {
 }
 
 async function tokenRequest(body: Record<string, string>): Promise<Tokens> {
+  const secret = loadClientSecret()
+  if (secret) body.client_secret = secret
   const res = await fetch("/cors-proxy/", {
     method: "POST",
     headers: { "x-target-url": "https://oauth2.googleapis.com/token" },
@@ -120,6 +131,7 @@ export async function handleRedirect(clientId: string): Promise<YtAuth | null> {
     const verifier = sessionStorage.getItem("yt-pkce-verifier") ?? ""
     window.history.replaceState({}, "", window.location.pathname)
     if (!clientId.trim() || !verifier) throw new Error("missing client ID or PKCE verifier — connect again")
+    if (!loadClientSecret()) throw new Error("this Google client needs its client secret — paste it on the YouTube tab, then connect again")
     const tokens = await tokenRequest({
       client_id: clientId.trim(),
       code,

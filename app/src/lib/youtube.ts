@@ -184,6 +184,7 @@ export interface UploadMeta {
   description: string
   visibility: "public" | "unlisted" | "private"
   madeForKids: boolean
+  format: "video" | "shorts"
   tags?: string[]
 }
 
@@ -205,7 +206,9 @@ export async function uploadVideo(
       snippet: {
         title: meta.title,
         description: meta.description,
-        tags: meta.tags?.filter(Boolean),
+        // Shorts surface via the Shorts feed when aspect is vertical; #Shorts
+        // is a belt-and-braces hint for the recommendation system.
+        tags: meta.format === "shorts" ? [...(meta.tags?.filter(Boolean) ?? []), "Shorts"] : meta.tags?.filter(Boolean),
         categoryId: "24", // Entertainment
       },
       status: {

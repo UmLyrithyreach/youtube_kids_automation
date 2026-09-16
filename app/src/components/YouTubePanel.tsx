@@ -40,7 +40,7 @@ export function YouTubePanel() {
   const [booting, setBooting] = useState(true)
   const [clientIdInput, setClientIdInput] = useState(() => loadClientId())
   const [secretInput, setSecretInput] = useState(() => loadClientSecret())
-  const [meta, setMeta] = useState<UploadMeta>({ title: "", description: "", visibility: "public", madeForKids: true })
+  const [meta, setMeta] = useState<UploadMeta>({ title: "", description: "", visibility: "public", madeForKids: true, format: "video" })
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [fileLocal, setFileLocal] = useState<File | null>(null)
@@ -78,7 +78,7 @@ export function YouTubePanel() {
     connectYouTube(clientIdInput).catch((e: Error) => toast.error(e.message))
   }
 
-  const packText = `Title: ${meta.title}\n\nDescription: ${meta.description}\n\nVisibility: ${meta.visibility}\nMade for kids: ${meta.madeForKids ? "yes" : "no"}`
+  const packText = `Title: ${meta.title}\n\nDescription: ${meta.description}\n\nVisibility: ${meta.visibility}\nMade for kids: ${meta.madeForKids ? "yes" : "no"}\nPublish as: ${meta.format === "shorts" ? "YouTube Short (vertical, ≤3 min)" : "Regular YouTube video"}`
 
   const onManualUpload = async () => {
     if (!meta.title.trim()) {
@@ -308,6 +308,17 @@ export function YouTubePanel() {
                 value={meta.description}
                 onChange={(e) => setMeta((m) => ({ ...m, description: e.target.value }))}
               />
+            </label>
+            <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+              Publish as
+              <select
+                className={inputCls + " mt-1.5"}
+                value={meta.format}
+                onChange={(e) => setMeta((m) => ({ ...m, format: e.target.value as UploadMeta["format"] }))}
+              >
+                <option value="video">Regular video</option>
+                <option value="shorts">Short (vertical, ≤3 min)</option>
+              </select>
             </label>
             <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               Visibility

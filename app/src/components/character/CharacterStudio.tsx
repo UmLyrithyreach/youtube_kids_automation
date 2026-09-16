@@ -29,6 +29,8 @@ import {
   restoreCanonicalCharacters,
   setSelectedCharacterId,
   generateCharacterWithAI,
+  createManualCharacter,
+  fileToDataUrl,
   build360TurnaroundPrompt,
   type Character,
 } from "@/lib/characterVault"
@@ -96,6 +98,10 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
   const [generating, setGenerating] = useState(false)
   const [progressText, setProgressText] = useState("")
   const [error, setError] = useState<string | null>(null)
+  // Manual mode: bring images from your own AI (ChatGPT, Gemini, Midjourney…)
+  const [manualMode, setManualMode] = useState(false)
+  const [manualFiles, setManualFiles] = useState<File[]>([])
+  const [manualBusy, setManualBusy] = useState(false)
 
   const [copied, setCopied] = useState(false)
   const [copiedImage, setCopiedImage] = useState(false)
@@ -210,6 +216,33 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
     } finally {
       setGenerating(false)
       setProgressText("")
+    }
+  }
+
+  // Manual import: images from the user's own AI, prompt stays as typed — no
+  // LLM/image API calls. ponytail: heuristic name/species via fallbackCharData.
+  const handleManualImport = async () => {
+    if (!promptInput.trim() || manualBusy) return
+    setManualBusy(true)
+    setError(null)
+    try {
+      const fullPrompt = `Role: ${selectedRole.toUpperCase()} MASCOT.\nStyle: ${selectedStyle === "3d" ? "3D Pixar Animation with volumetric lighting" : "2D Storybook Vector Cartoon with clean dark outlines"}.\nRequest: ${promptInput.trim()}`
+      const portrait = manualFiles[0] ? await fileToDataUrl(manualFiles[0]) : undefined
+      const sheet = manualFiles[1] ? await fileToDataUrl(manualFiles[1]) : undefined
+      const newChar = await createManualCharacter({ fullPrompt, role: selectedRole, portraitDataUrl: portrait, sheetDataUrl: sheet })
+      const updated = loadCharacterVault()
+      setCharacters(updated)
+      setActiveChar(newChar)
+      setSelectedCharacterId(newChar.id)
+      onSelectCharacter(newChar)
+      setPromptInput("")
+      setManualFiles([])
+      setManualMode(false)
+      toast.success(`"${newChar.name}" added to the vault from your uploaded images!`)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setManualBusy(false)
     }
   }
 
@@ -357,6 +390,81 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
     toast.success(`Downloading ${filename}...`)
   }
 
+  // Manual paste-in (Part 2 of manual workflow): Ctrl+V an image copied from
+  // Gemini/AI chat → saved into the active tab's asset slot in the vault.
+  // Empty vault: creates a new character shell to receive the paste.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      // Don't hijack text pasting into prompt inputs
+      const el = document.activeElement
+      if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"))
+      const file = item?.getAsFile()
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          // Downscale to max 1536px wide → keeps vault localStorage small
+          const scale = Math.min(1, 1536 / img.width)
+          const canvas = document.createElement("canvas")
+          canvas.width = Math.round(img.width * scale)
+          canvas.height = Math.round(img.height * scale)
+          canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height)
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.88)
+
+          let updated: Character
+          if (!activeChar) {
+            // Vault empty → new character shell named from the timestamp
+            updated = {
+              id: `char-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              name: `Pasted Character ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+              role: "hero",
+              species: "Pasted Reference Model",
+              tagline: "Imported from manual paste",
+              description: "Character created from a manually pasted image (Gemini/AI import).",
+              frozenPrompt: "",
+              turnaroundPrompt: build360TurnaroundPrompt({
+                name: "Pasted Character",
+                species: "Pasted Reference Model",
+                role: "hero",
+                description: "Imported from manual paste.",
+                palette: { name: "Pasted Character", species: "Pasted Reference Model" } as Character["palette"],
+              }),
+              portraitUrl: undefined,
+              turnaroundSheetUrl: dataUrl,
+              palette: { name: "Pasted Character", species: "Pasted Reference Model" } as Character["palette"],
+              createdAt: Date.now(),
+            }
+            const all = loadCharacterVault()
+            const next = [updated, ...all]
+            saveCharacterVault(next)
+            setCharacters(next)
+          } else {
+            updated =
+              activeAssetTab === "turnaround"
+                ? { ...activeChar, turnaroundSheetUrl: dataUrl }
+                : { ...activeChar, portraitUrl: dataUrl }
+            const all = loadCharacterVault()
+            const next = all.map((c) => (c.id === activeChar.id ? updated : c))
+            saveCharacterVault(next)
+            setCharacters(next)
+          }
+          setActiveChar(updated)
+          setSelectedCharacterId(updated.id)
+          onSelectCharacter(updated)
+          toast.success(
+            `Pasted image saved as ${activeAssetTab === "turnaround" ? "360° Sheet" : "3D Portrait"} for ${updated.name}!`
+          )
+        }
+        img.src = reader.result as string
+      }
+      reader.readAsDataURL(file)
+    }
+    document.addEventListener("paste", onPaste)
+    return () => document.removeEventListener("paste", onPaste)
+  }, [activeChar, activeAssetTab, onSelectCharacter])
+
   const handleApplyChip = (chip: typeof INSPIRATION_CHIPS[number]) => {
     setPromptInput(chip.prompt)
     setSelectedRole(chip.role)
@@ -436,12 +544,26 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
         )}
 
         {/* Expansive Promptable AI Creation Workshop */}
-        <form onSubmit={handleGenerateAI} className="flex flex-col gap-3 pt-1">
+        <form onSubmit={(e) => { e.preventDefault(); if (manualMode) void handleManualImport(); else void handleGenerateAI(); }} className="flex flex-col gap-3 pt-1">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
               <Sparkles className="size-4 text-indigo-500 dark:text-sky-400" />
-              <span>Prompt New Character to AI</span>
+              <span>{manualMode ? "Import Character from Your Own AI" : "Prompt New Character to AI"}</span>
             </label>
+            <button
+              type="button"
+              onClick={() => setManualMode((m) => !m)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-all cursor-pointer",
+                manualMode
+                  ? "border-amber-400/80 bg-amber-500/10 text-amber-600 dark:text-amber-300"
+                  : "border-[#d0d3dc] dark:border-[#2a2b35] bg-[#e4e6ec] dark:bg-[#181920] text-zinc-600 dark:text-zinc-300 hover:border-amber-400 hover:text-amber-600"
+              )}
+              title="Switch between AI autogeneration and manual import"
+            >
+              <ImageIcon className="size-3.5" />
+              {manualMode ? "Switch to AI generate" : "Manual import instead"}
+            </button>
 
             {/* Quick Controls: Role & Style Selection */}
             <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -507,7 +629,8 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault()
-                  void handleGenerateAI()
+                  if (manualMode) void handleManualImport()
+                  else void handleGenerateAI()
                 }
               }}
               disabled={generating}
@@ -549,6 +672,42 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
               </div>
             </div>
           </div>
+
+          {manualMode && (
+            <div className="flex flex-col gap-2.5 rounded-2xl border border-amber-400/60 bg-amber-500/5 dark:bg-amber-500/5 p-3.5">
+              <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                1. Keep the prompt above, paste it into your own AI (ChatGPT, Gemini, Midjourney…) and generate images there.
+                2. Download them. 3. Upload here — portrait first (1st image), 360° turnaround sheet second (optional).
+                The character is added straight to the vault. No studio AI keys needed.
+              </p>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={manualBusy}
+                onChange={(e) => setManualFiles(Array.from(e.target.files ?? []).slice(0, 2))}
+                className="text-xs text-zinc-600 dark:text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 dark:file:bg-zinc-100 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white dark:file:text-zinc-900 file:cursor-pointer"
+              />
+              {manualFiles.length > 0 && (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {manualFiles.length} image{manualFiles.length > 1 ? "s" : ""} ready: {manualFiles.map((f) => f.name).join(", ")}
+                </p>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  {manualFiles.length === 0 ? "No image required — vault entry with prompt only" : manualFiles.length === 1 ? "1 image → portrait" : "2 images → portrait + turnaround sheet"}
+                </span>
+                <ShinyButton
+                  type="submit"
+                  disabled={manualBusy || !promptInput.trim()}
+                  loading={manualBusy}
+                  icon={<ImageIcon className="size-3.5" />}
+                >
+                  {manualBusy ? "Importing to vault..." : "Import to Character Vault"}
+                </ShinyButton>
+              </div>
+            </div>
+          )}
 
           {progressText && (
             <p className="text-xs text-indigo-600 dark:text-sky-400 flex items-center gap-1.5 animate-pulse mt-0.5">
@@ -902,6 +1061,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                     <div className="flex flex-col items-center justify-center gap-3 p-10 text-center min-h-[220px]">
                       <Layers className="size-8 text-zinc-300 dark:text-zinc-600" />
                       <p className="text-xs text-zinc-500">No 360° model sheet generated yet.</p>
+                      <p className="text-[11px] text-zinc-400">Paste an image here (Ctrl+V) — copied from Gemini/AI — to save it as the sheet.</p>
                       <button
                         type="button"
                         onClick={handleAiRenderSheet}
@@ -997,6 +1157,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                     <div className="flex flex-col items-center justify-center gap-3 p-10 text-center min-h-[220px]">
                       <ImageIcon className="size-8 text-zinc-300 dark:text-zinc-600" />
                       <p className="text-xs text-zinc-500">No 3D concept portrait generated yet.</p>
+                      <p className="text-[11px] text-zinc-400">Paste an image here (Ctrl+V) — copied from Gemini/AI — to save it as the portrait.</p>
                       <button
                         type="button"
                         onClick={handleAiRenderPortrait}

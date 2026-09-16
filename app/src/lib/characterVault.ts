@@ -239,6 +239,117 @@ export function setSelectedCharacterId(id: string) {
   }
 }
 
+// Shared heuristic parsing — used when no LLM is configured, and by manual mode
+function fallbackCharData(userPrompt: string): {
+  name: string
+  role: Character["role"]
+  species: string
+  tagline: string
+  description: string
+  palette: CharacterPalette
+  frozenPrompt: string
+} {
+  {
+    const p = userPrompt.trim()
+    // Pull the actual creature/character words out of the structured prompt
+    // ("Role: HERO MASCOT.\nStyle: 3D...\nRequest: <the real idea>") — skip Role/Style lines
+    const requestMatch = p.match(/Request:\s*([\s\S]+)/i)
+    const requestText = (requestMatch ? requestMatch[1] : p).trim()
+    const nameMatch = requestText.match(/(?:named|name is|call (?:it|him|her)|called)\s+([A-Za-z0-9'-]+)/i)
+    // Skip filler verbs/articles when deriving a name from the request text
+    const FILLER = /^(a|an|the|create|make|give|me|design|draw|generate|build|want|i'd|like|please|with|and|of|for|mascot|character)$/i
+    const contentWords = requestText.split(/[\s,.]+/).filter((w) => w && !FILLER.test(w))
+    const name = nameMatch ? nameMatch[1] : (contentWords.slice(0, 2).join(" ") || "New Mascot")
+
+    return {
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      role: "hero",
+      species: "Animated Kids Character",
+      tagline: `Fun, brave, and cheerful mascot loved by kids!`,
+      description: `${name} is a colorful, friendly animated character designed for kids learning songs: ${requestText.slice(0, 200)}`,
+      palette: {
+        name,
+        species: "Animated Character",
+        primary: "#8b5cf6",
+        secondary: "#38bdf8",
+        accent: "#f59e0b",
+        skinOrFur: "#fed7aa",
+        eyeColor: "#1e293b",
+        outfit: "#8b5cf6",
+      },
+      frozenPrompt: `${name}, a cute stylized 3D character: ${requestText}. 3D Pixar Disney stylized animation, warm volumetric lighting, storybook proportions, clean studio background, no text, no watermark`,
+    }
+  }
+}
+
+// Manual mode: the user generated images with their own AI (ChatGPT, Gemini,
+// Midjourney…) and uploads them here — no LLM or image API calls at all.
+export async function createManualCharacter(opts: {
+  fullPrompt: string
+  role?: Character["role"]
+  portraitDataUrl?: string
+  sheetDataUrl?: string
+}): Promise<Character> {
+  const charData = fallbackCharData(opts.fullPrompt)
+  const role = opts.role ?? charData.role
+  const palette: CharacterPalette = {
+    ...charData.palette,
+    name: charData.name,
+    species: charData.species,
+  }
+  const turnaroundPrompt = build360TurnaroundPrompt({
+    name: charData.name,
+    species: charData.species,
+    role: charData.role,
+    description: charData.description,
+    palette,
+  })
+
+  const newChar: Character = {
+    id: `char-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: charData.name,
+    role,
+    species: charData.species,
+    tagline: charData.tagline,
+    description: charData.description,
+    frozenPrompt: charData.frozenPrompt,
+    turnaroundPrompt,
+    portraitUrl: opts.portraitDataUrl,
+    turnaroundSheetUrl: opts.sheetDataUrl,
+    palette,
+    createdAt: Date.now(),
+  }
+
+  const updated = [newChar, ...loadCharacterVault()]
+  saveCharacterVault(updated)
+  setSelectedCharacterId(newChar.id)
+  return newChar
+}
+
+// Read an uploaded image and downscale to ≤1024px so the vault's localStorage
+// payload stays small. ponytail: canvas/WebP re-encode, ~200KB/char ceiling —
+// move images to IndexedDB or a backend if the vault grows past ~10 characters.
+export function fileToDataUrl(file: File, max = 1024): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      const canvas = document.createElement("canvas")
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL("image/webp", 0.9))
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error("could not read that image file"))
+    }
+    img.src = url
+  })
+}
+
 // AI Character Generation using BYOK LLM & Image Modeler
 export async function generateCharacterWithAI(
   userPrompt: string,

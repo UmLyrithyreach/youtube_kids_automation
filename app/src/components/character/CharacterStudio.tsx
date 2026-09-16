@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import {
   Sparkles,
   Copy,
@@ -105,6 +105,16 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
   const [manualBusy, setManualBusy] = useState(false)
   const [manualPreview, setManualPreview] = useState<{ portrait: string; turnaround: string } | null>(null)
   const [manualCopied, setManualCopied] = useState<"portrait" | "turnaround" | null>(null)
+
+  // ponytail: object URLs leak on unmount; negligible for a studio tab
+  const manualThumbs = useMemo(
+    () =>
+      manualFiles.map((f, i) => ({
+        url: URL.createObjectURL(f),
+        label: i === 0 ? "Portrait" : "360° sheet",
+      })),
+    [manualFiles]
+  )
 
   const [copied, setCopied] = useState(false)
   const [copiedImage, setCopiedImage] = useState(false)
@@ -544,8 +554,8 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
           </div>
         </div>
 
-        {/* Collapsible BYOK Model Status */}
-        {showByokSettings && (
+        {/* Collapsible BYOK Model Status (AI mode only — manual mode uses no models) */}
+        {showByokSettings && !manualMode && (
           <div className="p-4 rounded-xl border border-[#d2d5de] dark:border-[#272832] bg-[#e6e8ee] dark:bg-[#101115] text-xs flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-1.5">
@@ -568,7 +578,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
         )}
 
         {/* Expansive Promptable AI Creation Workshop */}
-        <form onSubmit={(e) => { e.preventDefault(); if (manualMode) void handleManualImport(); else void handleGenerateAI(); }} className="flex flex-col gap-3 pt-1">
+        <form onSubmit={(e) => { e.preventDefault(); if (manualMode) handleManualGenerateText(); else void handleGenerateAI(); }} className="flex flex-col gap-3 pt-1">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <label className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
               <Sparkles className="size-4 text-indigo-500 dark:text-sky-400" />
@@ -669,7 +679,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                 <kbd className="font-mono text-[10px] bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-700/80 font-semibold text-zinc-600 dark:text-zinc-300 shadow-2xs">
                   Cmd+Enter
                 </kbd>
-                <span>to generate</span>
+                <span>{manualMode ? "to write prompts" : "to generate"}</span>
               </div>
 
               <div className="flex items-center gap-2">
@@ -687,43 +697,39 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
 
                 <ShinyButton
                   type="submit"
-                  disabled={generating || !promptInput.trim()}
+                  disabled={manualMode ? !promptInput.trim() : generating || !promptInput.trim()}
                   loading={generating}
-                  icon={<Send className="size-3.5" />}
+                  icon={manualMode ? <Sparkles className="size-3.5" /> : <Send className="size-3.5" />}
                 >
-                  {generating ? "Creating Mascot DNA..." : "Generate Mascot with AI"}
+                  {manualMode ? "Generate My Prompts" : generating ? "Creating Mascot DNA..." : "Generate Mascot with AI"}
                 </ShinyButton>
               </div>
             </div>
           </div>
 
           {manualMode && (
-            <div className="flex flex-col gap-2.5 rounded-2xl border border-amber-400/60 bg-amber-500/5 dark:bg-amber-500/5 p-3.5">
-              {!manualPreview ? (
-                <>
-                  <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
-                    Describe the character above, then generate the two ready-to-paste prompts (portrait + 360° turnaround sheet).
-                    Paste them into your own AI (ChatGPT, Gemini, Midjourney…), generate the images there, download, and upload back below.
-                    No studio AI keys needed.
-                  </p>
-                  <div className="flex justify-end">
-                    <ShinyButton
-                      type="button"
-                      disabled={!promptInput.trim()}
-                      onClick={handleManualGenerateText}
-                      icon={<Sparkles className="size-3.5" />}
-                    >
-                      Generate My Prompts (text)
-                    </ShinyButton>
-                  </div>
-                </>
-              ) : (
+            <div className="rounded-2xl border border-amber-400/60 bg-amber-500/5 dark:bg-amber-500/5 p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <ImageIcon className="size-4 text-amber-500" />
+                <span className="text-xs font-bold text-zinc-800 dark:text-zinc-100">Bring Your Own AI — 3 Steps</span>
+              </div>
+
+              <ol className="flex flex-col sm:flex-row gap-2 text-[11px] text-zinc-600 dark:text-zinc-300">
+                {["Generate both prompts below", "Paste into your AI (ChatGPT, Gemini, Midjourney…) → download the images", "Upload them back here"].map((s, i) => (
+                  <li key={i} className="flex-1 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-white/60 dark:bg-[#181920] p-2.5">
+                    <span className="size-5 shrink-0 rounded-full bg-amber-400 text-[10px] font-bold text-zinc-900 flex items-center justify-center">{i + 1}</span>
+                    <span className="leading-relaxed">{s}</span>
+                  </li>
+                ))}
+              </ol>
+
+              {manualPreview ? (
                 <>
                   {(["portrait", "turnaround"] as const).map((kind) => (
                     <div key={kind} className="flex flex-col gap-1.5 rounded-xl border border-zinc-200/80 dark:border-zinc-700/60 bg-white dark:bg-[#111217] p-3">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[11px] font-bold text-zinc-700 dark:text-zinc-200">
-                          {kind === "portrait" ? "1. Static Portrait Prompt" : "2. 360° Turnaround Sheet Prompt"}
+                          {kind === "portrait" ? "Static Portrait Prompt" : "360° Turnaround Sheet Prompt"}
                         </span>
                         <button
                           type="button"
@@ -734,42 +740,59 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                           {manualCopied === kind ? "Copied!" : "Copy"}
                         </button>
                       </div>
-                      <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap max-h-24 overflow-y-auto custom-scrollbar">
+                      <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400 whitespace-pre-wrap max-h-28 overflow-y-auto custom-scrollbar">
                         {manualPreview[kind]}
                       </p>
                     </div>
                   ))}
-                  <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
-                    Now paste each prompt into your AI, generate, download the images, and upload them back here —
-                    portrait first, turnaround sheet second. Then add to the vault.
-                  </p>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    disabled={manualBusy}
-                    onChange={(e) => setManualFiles(Array.from(e.target.files ?? []).slice(0, 2))}
-                    className="text-xs text-zinc-600 dark:text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-900 dark:file:bg-zinc-100 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white dark:file:text-zinc-900 file:cursor-pointer"
-                  />
-                  {manualFiles.length > 0 && (
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {manualFiles.length} image{manualFiles.length > 1 ? "s" : ""} ready: {manualFiles.map((f) => f.name).join(", ")}
-                    </p>
-                  )}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                      {manualFiles.length === 0 ? "No image required — vault entry with prompt only" : manualFiles.length === 1 ? "1 image → portrait" : "2 images → portrait + turnaround sheet"}
-                    </span>
-                    <ShinyButton
-                      type="submit"
-                      disabled={manualBusy || !promptInput.trim()}
-                      loading={manualBusy}
-                      icon={<ImageIcon className="size-3.5" />}
-                    >
-                      {manualBusy ? "Importing to vault..." : "Import to Character Vault"}
-                    </ShinyButton>
+
+                  <div className="rounded-xl border border-dashed border-amber-400/60 bg-white/60 dark:bg-[#181920] p-3 flex flex-col gap-2.5">
+                    {manualThumbs.length > 0 && (
+                      <div className="flex items-center gap-3">
+                        {manualThumbs.map((t, i) => (
+                          <div key={i} className="flex flex-col items-center gap-1">
+                            <img src={t.url} alt={t.label} className="size-16 rounded-lg object-cover border border-[#d0d3dc] dark:border-[#2a2b35]" />
+                            <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">{t.label}</span>
+                            <button
+                              type="button"
+                              onClick={() => URL.revokeObjectURL(t.url) || setManualFiles((fs) => fs.filter((_, j) => j !== i))}
+                              className="text-[10px] text-rose-500 hover:text-rose-600 cursor-pointer"
+                            >
+                              remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      disabled={manualBusy}
+                      onChange={(e) => setManualFiles(Array.from(e.target.files ?? []).slice(0, 2))}
+                      className="text-xs text-zinc-600 dark:text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-500 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white file:cursor-pointer"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                        {manualFiles.length === 0 ? "No image required — vault entry with prompt only" : manualFiles.length === 1 ? "1 image → portrait" : "2 images → portrait + turnaround sheet"}
+                      </span>
+                      <ShinyButton
+                        type="button"
+                        disabled={manualBusy || !promptInput.trim()}
+                        loading={manualBusy}
+                        onClick={() => void handleManualImport()}
+                        icon={<ImageIcon className="size-3.5" />}
+                      >
+                        {manualBusy ? "Importing to vault..." : "Import to Character Vault"}
+                      </ShinyButton>
+                    </div>
                   </div>
                 </>
+              ) : (
+                <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  Press <kbd className="font-mono text-[10px] bg-zinc-100 dark:bg-zinc-800/80 px-1 rounded border border-zinc-200 dark:border-zinc-700/80">Cmd+Enter</kbd> or
+                  the button above to write both prompts from your description — nothing is sent to any AI yet.
+                </p>
               )}
             </div>
           )}

@@ -755,7 +755,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                             <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">{t.label}</span>
                             <button
                               type="button"
-                              onClick={() => URL.revokeObjectURL(t.url) || setManualFiles((fs) => fs.filter((_, j) => j !== i))}
+                              onClick={() => { URL.revokeObjectURL(t.url); setManualFiles((fs) => fs.filter((_, j) => j !== i)) }}
                               className="text-[10px] text-rose-500 hover:text-rose-600 cursor-pointer"
                             >
                               remove

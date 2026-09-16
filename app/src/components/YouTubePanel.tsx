@@ -13,9 +13,12 @@ import {
   ExternalLink,
   Copy,
   ClipboardCheck,
+  Sparkles,
 } from "lucide-react"
 import { toast } from "sonner"
 import { MediaUploadDropzone } from "@/components/ui/MediaUploadDropzone"
+import { runVisionFromDataUrls } from "@/lib/byok"
+import { loadConfigs } from "@/lib/agents"
 import {
   connectYouTube,
   handleRedirect,
@@ -43,6 +46,7 @@ export function YouTubePanel() {
   const [fileLocal, setFileLocal] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [aiBusy, setAiBusy] = useState(false)
   const bootRan = useRef(false)
 
   useEffect(() => {
@@ -90,6 +94,69 @@ export function YouTubePanel() {
     }
     toast.message("Metadata copied — pick the file in YouTube Studio")
     window.open("https://studio.youtube.com/channel/UC/videos/upload", "_blank", "noopener")
+  }
+
+  // AI title/description: grab frames from the dropped video, let the Vision
+  // agent watch them, then write the metadata itself. Frames stay in-memory
+  // (data URLs) — nothing is uploaded except to the user's own endpoint.
+  const onAiMeta = async () => {
+    if (!fileLocal) {
+      toast.error("Drop the video file first — the AI watches it to write the details")
+      return
+    }
+    setAiBusy(true)
+    try {
+      const url = URL.createObjectURL(fileLocal)
+      const video = document.createElement("video")
+      video.muted = true
+      video.src = url
+      await new Promise<void>((res, rej) => {
+        video.onloadedmetadata = () => res()
+        video.onerror = () => rej(new Error("browser can't decode this video for frame grabs"))
+      })
+      // ponytail: 3 evenly-spaced frames (start/middle/late) — enough to read
+      // the story; upgrade path = scene-detection sampling for long videos.
+      const stamps = [0.1, 0.5, 0.9].map((f) => Math.min(video.duration * f, video.duration - 0.1))
+      const frames: string[] = []
+      const canvas = document.createElement("canvas")
+      canvas.width = 640
+      canvas.height = Math.round((640 * video.videoHeight) / Math.max(video.videoWidth, 1))
+      const ctx = canvas.getContext("2d")!
+      for (const t of stamps) {
+        await new Promise<void>((res, rej) => {
+          video.onseeked = () => res()
+          video.onerror = () => rej(new Error("seek failed"))
+          video.currentTime = t
+        })
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        frames.push(canvas.toDataURL("image/jpeg", 0.7))
+      }
+      URL.revokeObjectURL(url)
+
+      const vision = loadConfigs().vision
+      if (!vision?.baseUrl || !vision.apiKey) {
+        toast.error("Configure the Vision agent first (Agents tab → Visual Prompter & Framing)")
+        return
+      }
+      const out = await runVisionFromDataUrls(
+        vision,
+        frames,
+        "You just watched key frames from a YouTube kids video. Write the upload metadata as JSON: {\"title\": string (max 95 chars, fun, emoji ok), \"description\": string (2-4 sentences, kid-friendly, what happens + gentle positive takeaway)}. JSON only, no markdown fences."
+      )
+      const m = out.match(/\{[\s\S]*\}/)
+      if (!m) throw new Error("model didn't return JSON")
+      const parsed = JSON.parse(m[0]) as { title?: string; description?: string }
+      setMeta((prev) => ({
+        ...prev,
+        title: parsed.title?.slice(0, 100) || prev.title,
+        description: parsed.description || prev.description,
+      }))
+      toast.success("Title & description written from the video")
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't generate metadata")
+    } finally {
+      setAiBusy(false)
+    }
   }
 
   const onUpload = () => {
@@ -213,7 +280,19 @@ export function YouTubePanel() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 sm:col-span-2">
-              Title
+              <span className="flex items-center justify-between">
+                Title
+                <button
+                  type="button"
+                  title="AI watches the video and writes the title & description"
+                  onClick={() => void onAiMeta()}
+                  disabled={aiBusy}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 dark:border-indigo-500/40 bg-indigo-50 dark:bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
+                >
+                  {aiBusy ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                  {aiBusy ? "Watching video…" : "AI write"}
+                </button>
+              </span>
               <input
                 className={inputCls + " mt-1.5"}
                 placeholder="SpidyCat — Never Give Up! 🎵"

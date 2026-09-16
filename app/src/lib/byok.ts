@@ -191,7 +191,17 @@ export async function extractFileText(file: File): Promise<string> {
 // ponytail: image gen takes 15-60s+ through combo routers — 120s timeout.
 // Combo round-robin can rotate onto dead/quota'd backends (429/502/503), so
 // after the combo fails we retry the working antigravity image tag directly.
+// Router tags (ag/…, gemini/…) only exist on 9router; Google's OpenAI-compat
+// layer needs bare model names. Tag → bare maps cleanly (segment after "/").
+function googleModelName(model: string, target: string): string {
+  return target.includes("/openai") && model.includes("/") ? (model.split("/").pop() as string) : model
+}
+
 const IMAGE_FALLBACK_MODELS = ["ag/gemini-3.1-flash-image", "gemini/gemini-3.1-flash-image"]
+// Bare names for Google OpenAI-compat targets (no 9router tags).
+// Verified 2026-09-16: only gemini-2.5-flash-image + gemini-3-pro-image-preview
+// are recognized by the compat endpoint; 3.1 variants 404 there (v1main).
+const GOOGLE_IMAGE_FALLBACK_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"]
 
 // Image endpoints take only a prompt (no system messages), so the agent's custom
 // skill text gets prepended to the prompt — the agent's style/layout rules apply.
@@ -275,9 +285,11 @@ export async function runImage(c: AgentConfig, prompt: string): Promise<string> 
 
 class QuotaResetError extends Error {}
 
-function quotaResetError(what: string, errors: string[], resetMs: number | null): string {
-  const wait = resetMs ? ` Quota resets in ~${Math.ceil(resetMs / 60000)} min — retry then, or switch the Image Generator model in Agents.` :
-    " Wait for the quota to reset or switch the model in Agents."
+function quotaResetError(what: string, errors: string[], resetMs: number | null, daily = false): string {
+  const wait = daily
+    ? " Free-tier image quota is hard-exhausted (limit: 0) — this won't clear in minutes. Add another antigravity account, enable billing, or switch the image provider."
+    : resetMs ? ` Quota resets in ~${Math.ceil(resetMs / 60000)} min — retry then, or switch the Image Generator model in Agents.`
+    : " Wait for the quota to reset or switch the model in Agents."
   return `${what} failed — all image models quota-limited.${wait} ` +
     `Last errors: ${errors.slice(-3).join(" | ")}`
 }
@@ -289,7 +301,35 @@ async function runImageRetry(
   size: string,
   what: string
 ): Promise<string> {
-  const candidates = [c.model, ...IMAGE_FALLBACK_MODELS.filter((m) => m !== c.model)]
+  // Pollinations: free GET-per-prompt image endpoint (no key, no /models).
+  // Prompt lives in the URL path; response body IS the image. Intermittent
+  // 403s (verified) — the retry loop absorbs them. Random seed busts caching.
+  if (target.includes("pollinations.ai")) {
+    const [w, h] = size.split("x")
+    const origin = new URL(target).origin
+    const errors: string[] = []
+    const deadline = Date.now() + IMAGE_RETRY_BUDGET_MS
+    let waitMs = IMAGE_MIN_WAIT_MS
+    while (Date.now() < deadline) {
+      const q = encodeURIComponent(withSkill(c, prompt).slice(0, 2000))
+      const url = `${origin}/prompt/${q}?width=${w}&height=${h}&nologo=true&model=flux&seed=${Math.floor(Math.random() * 1e6)}`
+      const res = await fetchRetry(endpointUrl(), {
+        method: "GET",
+        headers: { ...headers(c), "x-target-url": url },
+      }, 2, 120_000)
+      if (res.ok) return parseImageResponse(res)
+      errors.push(`pollinations: HTTP ${res.status}`)
+      if (Date.now() + waitMs >= deadline) break
+      await sleep(waitMs)
+      waitMs = Math.min(waitMs * 2, IMAGE_MAX_WAIT_MS)
+    }
+    throw new Error(`${what} failed — Pollinations unavailable (${errors.slice(-2).join(" | ")}).`)
+  }
+  // Google OpenAI-compat targets can't parse 9router tags (ag/…, gemini/…) —
+  // they 404 as "models/ag/… is not found for API version v1main". Use bare names.
+  const bare = target.includes("/openai")
+  const sourceModels = bare ? GOOGLE_IMAGE_FALLBACK_MODELS : IMAGE_FALLBACK_MODELS
+  const candidates = [googleModelName(c.model, target), ...sourceModels.filter((m) => googleModelName(m, target) !== googleModelName(c.model, target))]
   const errors: string[] = []
   const deadline = Date.now() + IMAGE_RETRY_BUDGET_MS
   let waitMs = IMAGE_MIN_WAIT_MS
@@ -303,8 +343,14 @@ async function runImageRetry(
         if (!res.ok) {
           const detail = await res.text().catch(() => "")
           errors.push(`${model}: HTTP ${res.status} ${detail.slice(0, 120)}`)
-          // If the error mentions a reset window, wait for the shortest one
+          // Daily quotas report a tiny retryDelay but never recover mid-day —
+          // "retry in 33s" on a PerDay violation is a lie. Detect and fail fast.
+          const isDaily = /quotaId.\s*:\s*.[^"]*PerDay/i.test(detail) ||
+            /generate_content_free_tier_(requests|input_token_count), limit: 0/.test(detail)
           const resetMs = parseMinResetMs(detail)
+          if (isDaily) {
+            throw new QuotaResetError(quotaResetError(what, errors, null, true))
+          }
           if (resetMs !== null) {
             if (resetMs >= deadline - Date.now()) {
               // quota resets after our budget expires — retrying is futile, fail now
@@ -384,7 +430,20 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-// Vision: describe images (OpenAI-compatible multimodal) + summarize attached text files.
+// Vision from ready-made frame data URLs (video frame grabs — see YouTubePanel)
+export async function runVisionFromDataUrls(
+  c: AgentConfig,
+  dataUrls: string[],
+  userPrompt: string
+): Promise<string> {
+  if (dataUrls.length === 0) return ""
+  const content: unknown[] = [{ type: "text", text: userPrompt }]
+  for (const url of dataUrls) content.push({ type: "image_url", image_url: { url } })
+  const messages: unknown[] = []
+  if (c.skill?.trim()) messages.push({ role: "system", content: c.skill.trim() })
+  messages.push({ role: "user", content })
+  return runChatWithFallback(c, messages, "Vision agent")
+}
 export async function runVision(
   c: AgentConfig,
   files: File[],

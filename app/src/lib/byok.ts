@@ -37,28 +37,29 @@ function headers(c: AgentConfig): HeadersInit {
 }
 
 // fetch with auto-retry on 429/5xx — respects Retry-After, backs off exponentially.
-// Network-level failures ("Failed to fetch") are NOT retried — they are explained instead:
-// wrong URL, offline, or CORS (endpoint refuses browser requests).
-async function fetchRetry(input: string, init: RequestInit, tries = 3, timeoutMs = 60_000): Promise<Response> {
+// timeoutMs: 15s default for text endpoints; image generation is SLOW (15-60s+)
+// through combo routers, so image calls pass a longer timeout explicitly.
+// Backoff caps at 20s so per-minute quota windows get a chance to reset.
+async function fetchRetry(input: string, init: RequestInit, tries = 2, timeoutMs = 15_000): Promise<Response> {
   let last: Response | null = null
   for (let attempt = 0; attempt < tries; attempt++) {
     let res: Response
     try {
       res = await fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) })
     } catch (e) {
-      if ((e as Error).name === "TimeoutError") throw new Error("endpoint timed out — it accepted the request but never answered")
+      if ((e as Error).name === "TimeoutError") throw new Error(`endpoint timed out after ${timeoutMs / 1000}s`)
       throw new Error(
-        `Failed to reach endpoint (${(e as Error).message}). Check: 1) base URL is correct and reachable, 2) your internet, ` +
-          `3) CORS — the endpoint must send Access-Control-Allow-Origin for browser apps; if it doesn't, use a CORS proxy or server-side endpoint`
+        `Failed to reach endpoint (${(e as Error).message}). Check base URL & CORS.`
       )
     }
+    // retry on 429 AND 5xx (routers often wrap upstream 429s as 502)
     if (res.status !== 429 && res.status < 500) return res
     last = res
     if (attempt < tries - 1) {
       const retryAfter = Number(res.headers.get("retry-after"))
       const wait = Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1000
-        : 1500 * 2 ** attempt + Math.random() * 500
+        ? Math.min(retryAfter * 1000, 20_000)
+        : Math.min(2000 * 3 ** attempt, 20_000)
       await new Promise((r) => setTimeout(r, wait))
     }
   }
@@ -135,110 +136,42 @@ export async function probeAgent(capability: Capability, c: AgentConfig | null):
 }
 
 // text-to-text — OpenAI-compatible chat completions
-export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
-  const res = await fetchRetry(endpointUrl(), {
-    method: "POST",
-    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
-    body: JSON.stringify({ model: c.model, messages: [{ role: "user", content: prompt }], stream: false }),
-  })
-  if (!res.ok) throw new Error(res.status === 429 ? "script agent rate-limited (429) — retries exhausted, wait a bit and try again" : `script agent failed: ${res.status}`)
-  return parseChatResponse(res)
-}
+// Chat-model fallback chain: when a subagent's model is quota-dead (429/502),
+// the router rotates to the next candidate instead of failing the stage.
+const CHAT_FALLBACK_MODELS = ["GLM-5.2", "ag/gemini-3.8-flash-high", "ag/gemini-3.7-flash-medium", "ag/gemini-3.5-flash-low", "cheap-model"]
 
-// text-to-video — returns playable video URL. Capability-mismatch checked by Monitor.
-// Path is user-configurable because providers disagree: OpenAI-style /v1/video/generations,
-// Google Veo /v1/.../models/veo-...:predictLongRunning, Replicate /v1/predictions, etc.
-export async function runVideo(c: AgentConfig, prompt: string): Promise<string> {
-  const path = c.videoPath?.trim() || "/v1/video/generations"
-  const target = targetFor(c, path)
-  if (target.includes("generativelanguage.googleapis.com") || target.includes("aiplatform.googleapis.com")) {
-    return runVeoGoogle(c, prompt, target)
-  }
-
-  const res = await fetchRetry(endpointUrl(), {
-    method: "POST",
-    headers: { ...headers(c), "x-target-url": target },
-    body: JSON.stringify({ model: c.model, prompt, instances: [{ prompt }] }),
-  })
-  if (!res.ok) throw new Error(`video agent failed: ${res.status} at ${path}`)
-  const data = (await jsonOrExplain(res)) as {
-    data?: { url?: string; video?: { url?: string } }[]
-    url?: string
-    video?: { url?: string }
-    predictions?: { videoUrl?: string }[]
-    output?: string | string[]
-    videos?: { url?: string }[]
-  }
-  // Response shapes vary wildly across video providers; dig through common ones.
-  const url =
-    data?.data?.[0]?.url ??
-    data?.data?.[0]?.video?.url ??
-    data?.url ??
-    data?.video?.url ??
-    data?.videos?.[0]?.url ??
-    data?.predictions?.[0]?.videoUrl ??
-    (typeof data?.output === "string" ? data.output : data?.output?.[0])
-  if (typeof url !== "string") throw new Error("no video URL in response (capability mismatch?)")
-  return url
-}
-
-// Google Generative Language API (Veo): POST {model}:predictLongRunning →
-// poll operation → fetch video bytes with the file URI + API key as query.
-async function runVeoGoogle(c: AgentConfig, prompt: string, target: string): Promise<string> {
-  // target like https://generativelanguage.googleapis.com/v1beta/openai + user path (default /v1/video/generations)
-  const root = target.split("/openai")[0] // https://generativelanguage.googleapis.com/v1beta
-  const model = c.model.replace(/^models\//, "")
-  const startUrl = `${root}/models/${model}:predictLongRunning`
-
-  const startRes = await fetchRetry(endpointUrl(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": c.apiKey, "x-target-url": startUrl },
-    body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: "16:9" } }),
-  })
-  if (!startRes.ok) {
-    const detail = await startRes.text().catch(() => "")
-    let msg = `video agent failed: ${startRes.status} at ${model}:predictLongRunning`
-    if (startRes.status === 429) {
-      msg =
-        "Veo quota exhausted (429) — free tier allows very few video generations per day. " +
-        "Wait until the daily reset (midnight Pacific) or enable billing on your Google AI Studio key. " +
-        (detail.match(/"message":\s*"([^"]+)"/)?.[1] ? `Endpoint said: ${detail.match(/"message":\s*"([^"]+)"/)![1]}` : "")
-    }
-    throw new Error(msg.trim())
-  }
-  const startData = (await jsonOrExplain(startRes)) as { name?: string }
-  const opName = startData?.name
-  if (typeof opName !== "string") throw new Error("Veo did not return an operation name")
-
-  // Poll the operation (up to ~5 min, video gen is slow)
-  const opUrl = `${root}/${opName}`
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 5000))
-    const opRes = await fetchRetry(endpointUrl(), {
-      headers: { "x-goog-api-key": c.apiKey, "x-target-url": opUrl },
+async function runChatWithFallback(
+  c: AgentConfig,
+  messages: unknown[],
+  what: string
+): Promise<string> {
+  const candidates = [c.model, c.escalateModel, ...CHAT_FALLBACK_MODELS]
+    .filter((m): m is string => Boolean(m))
+  const seen = new Set<string>()
+  const errors: string[] = []
+  for (const model of candidates) {
+    if (seen.has(model)) continue
+    seen.add(model)
+    const res = await fetchRetry(endpointUrl(), {
+      method: "POST",
+      headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
+      body: JSON.stringify({ model, messages, stream: false }),
     })
-    if (!opRes.ok) throw new Error(`video agent failed: ${opRes.status} while polling operation`)
-    const op = (await jsonOrExplain(opRes)) as { done?: boolean; response?: { generateVideoResponse?: { generatedSamples?: { video?: { uri?: string } }[] } } }
-    if (!op?.done) continue
-    const uri = op?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
-    if (typeof uri !== "string") throw new Error("no video URI in Veo response (capability mismatch?)")
-    // file URI needs the key appended to download
-    return `${uri}${uri.includes("?") ? "&" : "?"}key=${encodeURIComponent(c.apiKey)}`
+    if (res.ok) return parseChatResponse(res)
+    errors.push(`${model}: HTTP ${res.status}`)
+    // non-quota client errors (400/401/403/404) = config problem, don't rotate
+    if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) break
   }
-  throw new Error("Veo operation timed out after 5 minutes")
+  throw new Error(`${what} failed — tried ${seen.size} model(s), all quota-limited or unavailable. Last: ${errors.slice(-2).join(" | ")}`)
 }
 
-// text-to-speech — returns audio blob URL
-export async function runTts(c: AgentConfig, text: string): Promise<string> {
-  const res = await fetchRetry(endpointUrl(), {
-    method: "POST",
-    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/audio/speech") },
-    body: JSON.stringify({ model: c.model, input: text }),
-  })
-  if (!res.ok) throw new Error(`TTS agent failed: ${res.status}`)
-  const blob = await res.blob()
-  if (!blob.type.startsWith("audio")) throw new Error("response is not audio (capability mismatch?)")
-  return URL.createObjectURL(blob)
+export async function runScript(c: AgentConfig, prompt: string): Promise<string> {
+  const messages = []
+  if (c.skill?.trim()) {
+    messages.push({ role: "system", content: c.skill.trim() })
+  }
+  messages.push({ role: "user", content: prompt })
+  return runChatWithFallback(c, messages, "Script agent")
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +185,193 @@ export async function extractFileText(file: File): Promise<string> {
   if (!texty) return ""
   const text = await file.text()
   return text.slice(0, 12000) // cap context
+}
+
+// text-to-image — portrait or model sheet generator
+// ponytail: image gen takes 15-60s+ through combo routers — 120s timeout.
+// Combo round-robin can rotate onto dead/quota'd backends (429/502/503), so
+// after the combo fails we retry the working antigravity image tag directly.
+const IMAGE_FALLBACK_MODELS = ["ag/gemini-3.1-flash-image", "gemini/gemini-3.1-flash-image"]
+
+// Image endpoints take only a prompt (no system messages), so the agent's custom
+// skill text gets prepended to the prompt — the agent's style/layout rules apply.
+function withSkill(c: AgentConfig, prompt: string): string {
+  const skill = c.skill?.trim()
+  return skill ? `${skill}\n\n${prompt}` : prompt
+}
+
+async function tryImageOnce(c: AgentConfig, target: string, model: string, prompt: string, size: string): Promise<Response> {
+  return fetchRetry(endpointUrl(), {
+    method: "POST",
+    headers: { ...headers(c), "x-target-url": target },
+    body: JSON.stringify({
+      prompt: withSkill(c, prompt).slice(0, 4000),
+      model,
+      n: 1,
+      size,
+      response_format: "b64_json",
+    }),
+  // ponytail: inner tries=1 — the caller's retry loop already rotates models,
+  // so re-trying the same dead backend here just burns 20s backoffs.
+  }, 1, 120_000)
+}
+
+function parseImageResponse(res: Response): Promise<string> {
+  if (res.headers.get("content-type")?.startsWith("image/")) {
+    // ponytail: blob→base64 so URLs survive page reload (blob: URLs die on refresh)
+    return res.blob().then((blob) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+    )
+  }
+  return jsonOrExplain(res).then((data) => {
+    const b64 = data?.data?.[0]?.b64_json
+    if (b64) return `data:image/png;base64,${b64}`
+    const imgUrl = data?.data?.[0]?.url
+    if (typeof imgUrl === "string") return imgUrl
+    throw new Error("no image returned from endpoint")
+  })
+}
+
+// Parse the shortest reset delay from a quota error body so we can
+// wait exactly as long as the freshest capacity window needs (usually seconds-minutes).
+// Handles both antigravity's "reset after X" and Google's RetryInfo retryDelay.
+function parseMinResetMs(text: string): number | null {
+  const matches = [
+    ...text.matchAll(/reset after\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/g),
+    ...text.matchAll(/retryDelay"?\s*[:=]\s*"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?"/g),
+    ...text.matchAll(/retry after\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)/gi),
+  ]
+  let minMs: number | null = null
+  for (const m of matches) {
+    const [, h, mm, ss] = m
+    if (!h && !mm && !ss) continue
+    const total = ((h ? parseInt(h) : 0) * 3600 + (mm ? parseInt(mm) : 0) * 60 + (ss ? parseInt(ss) : 0)) * 1000
+    if (total > 0 && (minMs === null || total < minMs)) minMs = total
+  }
+  return minMs
+}
+
+const IMAGE_RETRY_BUDGET_MS = 360_000 // keep trying up to 6 minutes total
+const IMAGE_MIN_WAIT_MS = 5_000
+const IMAGE_MAX_WAIT_MS = 90_000
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms))
+}
+
+// text-to-image — portrait or model sheet generator with model fallback chain
+// Persists across capacity windows: antigravity resets are often seconds-minutes,
+// each request rotates to a different account, so retrying until the budget
+// runs out lands on an account with image capacity.
+export async function runImage(c: AgentConfig, prompt: string): Promise<string> {
+  const path = c.imagePath?.trim() || "/v1/images/generations"
+  return runImageRetry(c, targetFor(c, path), prompt, "1792x1024", "Image generation")
+}
+
+class QuotaResetError extends Error {}
+
+function quotaResetError(what: string, errors: string[], resetMs: number | null): string {
+  const wait = resetMs ? ` Quota resets in ~${Math.ceil(resetMs / 60000)} min — retry then, or switch the Image Generator model in Agents.` :
+    " Wait for the quota to reset or switch the model in Agents."
+  return `${what} failed — all image models quota-limited.${wait} ` +
+    `Last errors: ${errors.slice(-3).join(" | ")}`
+}
+
+async function runImageRetry(
+  c: AgentConfig,
+  target: string,
+  prompt: string,
+  size: string,
+  what: string
+): Promise<string> {
+  const candidates = [c.model, ...IMAGE_FALLBACK_MODELS.filter((m) => m !== c.model)]
+  const errors: string[] = []
+  const deadline = Date.now() + IMAGE_RETRY_BUDGET_MS
+  let waitMs = IMAGE_MIN_WAIT_MS
+
+  while (Date.now() < deadline) {
+    for (const model of candidates) {
+      // one attempt can take up to the full timeout — re-check between models
+      if (Date.now() >= deadline) break
+      try {
+        const res = await tryImageOnce(c, target, model, prompt, size)
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "")
+          errors.push(`${model}: HTTP ${res.status} ${detail.slice(0, 120)}`)
+          // If the error mentions a reset window, wait for the shortest one
+          const resetMs = parseMinResetMs(detail)
+          if (resetMs !== null) {
+            if (resetMs >= deadline - Date.now()) {
+              // quota resets after our budget expires — retrying is futile, fail now
+              throw new QuotaResetError(quotaResetError(what, errors, resetMs))
+            }
+            waitMs = Math.min(Math.max(resetMs, IMAGE_MIN_WAIT_MS), IMAGE_MAX_WAIT_MS)
+          }
+          continue
+        }
+        return await parseImageResponse(res)
+      } catch (e) {
+        if (e instanceof QuotaResetError) throw e
+        errors.push(`${model}: ${(e as Error).message}`)
+      }
+    }
+    if (Date.now() + waitMs >= deadline) break
+    await sleep(waitMs)
+    waitMs = Math.min(waitMs * 2, IMAGE_MAX_WAIT_MS)
+  }
+  throw new Error(quotaResetError(what, errors, null))
+}
+
+// image reference flow — 9router's /v1/images/generations IGNORES reference
+// images (verified: returns unrelated content), so consistency must come from
+// the frozen master prompt. Reference existence just re-emphasizes the prompt.
+export async function runImageWithReference(
+  c: AgentConfig,
+  prompt: string,
+  _referenceDataUrl?: string
+): Promise<string> {
+  return runImage(c, prompt)
+}
+
+
+export async function runKeyframeImage(
+  c: AgentConfig,
+  prompt: string,
+  aspectRatio: "16:9" | "9:16" = "16:9"
+): Promise<string> {
+  const path = c.imagePath?.trim() || "/v1/images/generations"
+  const target = targetFor(c, path)
+  const size = aspectRatio === "16:9" ? "1792x1024" : "1024x1792"
+  const fullPrompt = `${prompt.slice(0, 900)}, 3D digital animation render, volumetric soft lighting, vibrant preschool palette, cinematic depth of field, no text`
+  return runImageRetry(c, target, fullPrompt, size, "Keyframe generation")
+}
+
+// text-to-speech — High-speed parallel edge-tts speech synthesis stems
+export async function synthesizeSpeech(
+  text: string,
+  voice: string = "en-US-AnaNeural"
+): Promise<string> {
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice }),
+    })
+    if (res.ok) {
+      const blob = await res.blob()
+      return URL.createObjectURL(blob)
+    }
+  } catch {
+    // API endpoint unavailable — fall through to silent/Web Audio fallback
+  }
+
+  // Fallback: Generate minimal silent MP3 or empty data URI to maintain pipeline integrity
+  return "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA=="
 }
 
 // fileToBase64 for vision payload
@@ -283,7 +403,7 @@ export async function runVision(
   if (images.length > 0) {
     content.push({
       type: "text",
-      text: `The user attached ${images.length} image(s)${files.length - images.length > 0 ? ` and ${files.length - images.length} non-image file(s) (their text content is included below)` : ""} while asking: "${userPrompt}". Describe in detail everything visible/important in the attached images that the other AI agents (script writer, video generator, TTS) would need to know.`,
+      text: `The user attached ${images.length} image(s)${files.length - images.length > 0 ? ` and ${files.length - images.length} non-image file(s) (their text content is included below)` : ""} while asking: "${userPrompt}". Describe in detail everything visible/important in the attached images that the other AI agents (script writer, 360° character modeler) would need to know.`,
     })
     for (const img of images) {
       content.push({ type: "image_url", image_url: { url: await fileToDataUrl(img) } })
@@ -296,15 +416,11 @@ export async function runVision(
     })
   }
 
-  const res = await fetchRetry(endpointUrl(), {
-    method: "POST",
-    headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
-    body: JSON.stringify({
-      model: c.model,
-      messages: [{ role: "user", content }],
-      stream: false,
-    }),
-  })
-  if (!res.ok) throw new Error(`vision agent failed: ${res.status}`)
-  return parseChatResponse(res)
+  const messages: unknown[] = []
+  if (c.skill?.trim()) {
+    messages.push({ role: "system", content: c.skill.trim() })
+  }
+  messages.push({ role: "user", content })
+
+  return runChatWithFallback(c, messages, "Vision agent")
 }

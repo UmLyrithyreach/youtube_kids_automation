@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@variant dark (&:where(.dark, .dark *));
 
 :root {
   --background: hsl(0 0% 100%);
@@ -78,7 +78,81 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html.dark, html.dark body {
+    background-color: #030407;
+  }
+  html:not(.dark), html:not(.dark) body {
+    background-color: #ebecee;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    min-width: 320px;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    border: 1px solid hsl(0 0% 100% / 0.38);
+    background: linear-gradient(135deg, hsl(0 0% 100% / 0.76), hsl(0 0% 100% / 0.52));
+    box-shadow: 0 18px 56px hsl(257 34% 28% / 0.15), inset 0 1px 0 hsl(0 0% 100% / 0.65);
+    backdrop-filter: blur(20px) saturate(1.15);
+  }
+
+  .dark .glass-panel {
+    border-color: hsl(0 0% 100% / 0.1);
+    background: linear-gradient(135deg, hsl(240 18% 13% / 0.82), hsl(251 22% 16% / 0.58));
+    box-shadow: 0 18px 56px hsl(252 80% 8% / 0.42), inset 0 1px 0 hsl(0 0% 100% / 0.06);
+  }
+
+  /* Sleek modern custom scrollbar */
+  ::-webkit-scrollbar-button {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(240 5% 65% / 0.35) transparent;
+  }
+  .dark .custom-scrollbar {
+    scrollbar-color: hsl(240 5% 45% / 0.45) transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-button {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .custom-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(240 5% 65% / 0.35);
+    border-radius: 9999px;
+    transition: background 0.15s ease;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 5% 50% / 0.6);
+  }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(240 5% 45% / 0.45);
+  }
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(240 5% 60% / 0.7);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

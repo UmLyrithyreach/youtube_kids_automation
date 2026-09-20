@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useState, useRef, useEffect } from "react"
 import {
   Sparkles,
   Copy,
@@ -101,32 +101,37 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
   const [error, setError] = useState<string | null>(null)
   // Manual mode: bring images from your own AI (ChatGPT, Gemini, Midjourney…)
   const [manualMode, setManualMode] = useState(false)
-  const [manualFiles, setManualFiles] = useState<File[]>([])
+  const [manualPortrait, setManualPortrait] = useState<File | null>(null)
+  const [manualSheet, setManualSheet] = useState<File | null>(null)
   const [manualBusy, setManualBusy] = useState(false)
-  const [manualDrag, setManualDrag] = useState(false)
+  const [manualDragSlot, setManualDragSlot] = useState<"portrait" | "turnaround" | null>(null)
   const [manualPreview, setManualPreview] = useState<{ portrait: string; turnaround: string } | null>(null)
   const [manualCopied, setManualCopied] = useState<"portrait" | "turnaround" | null>(null)
+  const [lightboxSlot, setLightboxSlot] = useState<"portrait" | "turnaround" | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
 
-  // ponytail: object URLs leak on unmount; negligible for a studio tab
-  const manualThumbs = useMemo(
-    () =>
-      manualFiles.map((f, i) => ({
-        url: URL.createObjectURL(f),
-        label: i === 0 ? "Portrait" : "360° sheet",
-      })),
-    [manualFiles]
-  )
-
-  // Clipboard paste anywhere in the tab while manual mode is active
+  // Clipboard paste while manual mode is active: fills the first empty slot
+  // (portrait first). Each named drop zone also accepts drags targeted at itself.
   useEffect(() => {
     if (!manualMode) return
     const onPaste = (e: ClipboardEvent) => {
-      const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"))
-      if (files.length) setManualFiles((fs) => [...fs, ...files].slice(0, 2))
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"))
+      if (!file) return
+      if (!manualPortrait) setManualPortrait(file)
+      else if (!manualSheet) setManualSheet(file)
+      else toast.info("Both slots filled — remove one to paste a replacement")
     }
     window.addEventListener("paste", onPaste)
     return () => window.removeEventListener("paste", onPaste)
-  }, [manualMode])
+  }, [manualMode, manualPortrait, manualSheet])
+
+  // Lightbox: Esc closes
+  useEffect(() => {
+    if (!lightboxSlot) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLightboxSlot(null) }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [lightboxSlot])
 
   const [copied, setCopied] = useState(false)
   const [copiedImage, setCopiedImage] = useState(false)
@@ -178,6 +183,19 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
     setActiveChar(c)
     setSelectedCharacterId(c.id)
     onSelectCharacter(c)
+  }
+
+  // Drag a vault card up/down to reorder; order persists via saveCharacterVault
+  const handleReorder = (fromId: string, toId: string) => {
+    if (fromId === toId) return
+    const list = [...characters]
+    const from = list.findIndex((c) => c.id === fromId)
+    const to = list.findIndex((c) => c.id === toId)
+    if (from < 0 || to < 0) return
+    const [moved] = list.splice(from, 1)
+    list.splice(to, 0, moved)
+    setCharacters(list)
+    saveCharacterVault(list)
   }
 
   // Unrestricted deletion — user can delete ANY character, even down to 0
@@ -272,8 +290,8 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
     setError(null)
     try {
       const fullPrompt = `Role: ${selectedRole.toUpperCase()} MASCOT.\nStyle: ${selectedStyle === "3d" ? "3D Pixar Animation with volumetric lighting" : "2D Storybook Vector Cartoon with clean dark outlines"}.\nRequest: ${promptInput.trim()}`
-      const portrait = manualFiles[0] ? await fileToDataUrl(manualFiles[0]) : undefined
-      const sheet = manualFiles[1] ? await fileToDataUrl(manualFiles[1]) : undefined
+      const portrait = manualPortrait ? await fileToDataUrl(manualPortrait) : undefined
+      const sheet = manualSheet ? await fileToDataUrl(manualSheet) : undefined
       const newChar = await createManualCharacter({ fullPrompt, role: selectedRole, portraitDataUrl: portrait, sheetDataUrl: sheet })
       const updated = loadCharacterVault()
       setCharacters(updated)
@@ -281,7 +299,8 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
       setSelectedCharacterId(newChar.id)
       onSelectCharacter(newChar)
       setPromptInput("")
-      setManualFiles([])
+      setManualPortrait(null)
+      setManualSheet(null)
       setManualPreview(null)
       setManualMode(false)
       toast.success(`"${newChar.name}" added to the vault from your uploaded images!`)
@@ -441,6 +460,8 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
   // Empty vault: creates a new character shell to receive the paste.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      // Manual mode has its own 2-slot paste queue — don't double-fire here
+      if (manualMode) return
       // Don't hijack text pasting into prompt inputs
       const el = document.activeElement
       if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return
@@ -509,7 +530,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
     }
     document.addEventListener("paste", onPaste)
     return () => document.removeEventListener("paste", onPaste)
-  }, [activeChar, activeAssetTab, onSelectCharacter])
+  }, [activeChar, activeAssetTab, manualMode, onSelectCharacter])
 
   const handleApplyChip = (chip: typeof INSPIRATION_CHIPS[number]) => {
     setPromptInput(chip.prompt)
@@ -758,73 +779,110 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                     </div>
                   ))}
 
-                  <div
-                    className="rounded-xl border-2 border-dashed border-amber-400/60 bg-white/60 dark:bg-[#181920] p-3 flex flex-col gap-2.5"
-                    onDragOver={(e) => { e.preventDefault(); setManualDrag(true) }}
-                    onDragLeave={() => setManualDrag(false)}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      setManualDrag(false)
-                      const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith("image/"))
-                      if (files.length) setManualFiles((fs) => [...fs, ...files].slice(0, 2))
-                    }}
-                    tabIndex={0}
-                  >
-                    {manualThumbs.length > 0 && (
-                      <div className="flex items-center gap-3">
-                        {manualThumbs.map((t, i) => (
-                          <div key={i} className="flex flex-col items-center gap-1">
-                            <img src={t.url} alt={t.label} className="size-16 rounded-lg object-cover border border-[#d0d3dc] dark:border-[#2a2b35]" />
-                            <span className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">{t.label}</span>
-                            <button
-                              type="button"
-                              onClick={() => { URL.revokeObjectURL(t.url); setManualFiles((fs) => fs.filter((_, j) => j !== i)) }}
-                              className="text-[10px] text-rose-500 hover:text-rose-600 cursor-pointer"
-                            >
-                              remove
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <label
+                  {(["portrait", "turnaround"] as const).map((slot) => {
+                    const isPortrait = slot === "portrait"
+                    const file = isPortrait ? manualPortrait : manualSheet
+                    return (
+                    <div
+                      key={slot}
                       className={cn(
-                        "flex min-h-[72px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg text-center transition-all",
-                        manualDrag ? "border-2 border-dashed border-amber-500 bg-amber-500/10" : ""
+                        "rounded-xl border-2 border-dashed bg-white/60 dark:bg-[#181920] p-3 flex flex-col gap-2.5 transition-colors",
+                        manualDragSlot === slot ? "border-amber-500 bg-amber-500/10" : isPortrait ? "border-indigo-400/60" : "border-sky-400/60"
                       )}
+                      onDragOver={(e) => { e.preventDefault(); setManualDragSlot(slot) }}
+                      onDragLeave={() => setManualDragSlot(null)}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setManualDragSlot(null)
+                        const file = Array.from(e.dataTransfer.files ?? []).find((f) => f.type.startsWith("image/"))
+                        if (file) (isPortrait ? setManualPortrait : setManualSheet)(file)
+                      }}
+                      tabIndex={0}
                     >
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        disabled={manualBusy}
-                        className="hidden"
-                        onChange={(e) => {
-                          setManualFiles((fs) => [...fs, ...Array.from(e.target.files ?? [])].slice(0, 2))
-                          e.target.value = ""
-                        }}
-                      />
-                      <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                        {manualDrag ? "Drop to add" : "Drop, paste, or click to browse"}
-                      </span>
-                      <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                        {manualThumbs.length < 2 ? "1st image = portrait · 2nd = 360° sheet (paste from your AI with Ctrl+V)" : "Both slots filled — remove one to replace"}
-                      </span>
-                    </label>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                        {manualFiles.length === 0 ? "No image required — vault entry with prompt only" : manualFiles.length === 1 ? "1 image → portrait" : "2 images → portrait + turnaround sheet"}
-                      </span>
-                      <ShinyButton
-                        type="button"
-                        disabled={manualBusy || !promptInput.trim()}
-                        loading={manualBusy}
-                        onClick={() => void handleManualImport()}
-                        icon={<ImageIcon className="size-3.5" />}
-                      >
-                        {manualBusy ? "Importing to vault..." : "Import to Character Vault"}
-                      </ShinyButton>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-zinc-700 dark:text-zinc-200">
+                          {isPortrait ? "1 · 3D Hero Concept Portrait" : "2 · 360° Turnaround Model Sheet"}
+                        </span>
+                        {file && (
+                          <button
+                            type="button"
+                            onClick={() => (isPortrait ? setManualPortrait : setManualSheet)(null)}
+                            className="text-[10px] text-rose-500 hover:text-rose-600 cursor-pointer"
+                          >
+                            remove
+                          </button>
+                        )}
+                      </div>
+                      {file ? (
+                        <button
+                          type="button"
+                          onClick={() => setLightboxSlot(slot)}
+                          className="cursor-zoom-in"
+                          title="Click to view full size"
+                        >
+                          <img src={URL.createObjectURL(file)} alt={slot} className="h-56 w-full rounded-lg object-cover border border-[#d0d3dc] dark:border-[#2a2b35]" />
+                        </button>
+                      ) : (
+                        <label
+                          className="flex min-h-[144px] cursor-pointer flex-col items-center justify-center gap-1 rounded-lg text-center"
+                        >
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={manualBusy}
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0]
+                              if (f) (isPortrait ? setManualPortrait : setManualSheet)(f)
+                              e.target.value = ""
+                            }}
+                          />
+                          <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                            Drop, paste, or click to browse
+                          </span>
+                          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                            {isPortrait ? "Character's front view from your AI" : "T-pose / 4-view reference from your AI"}
+                          </span>
+                        </label>
+                      )}
                     </div>
+                    )
+                  })}
+
+                  {lightboxSlot && (
+                    <div
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-8 cursor-zoom-out"
+                      onClick={() => setLightboxSlot(null)}
+                    >
+                      <img
+                        src={URL.createObjectURL((lightboxSlot === "portrait" ? manualPortrait : manualSheet)!)}
+                        alt={lightboxSlot}
+                        className="max-h-full max-w-full rounded-lg shadow-2xl object-contain"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setLightboxSlot(null)}
+                        className="absolute top-4 right-4 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/20 cursor-pointer"
+                      >
+                        Close (Esc)
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                      {manualPortrait || manualSheet ? "Paste with Ctrl+V fills the next empty slot — or drop onto a specific zone" : "No image required — vault entry with prompt only"}
+                    </span>
+                    <ShinyButton
+                      type="button"
+                      disabled={manualBusy || !promptInput.trim()}
+                      loading={manualBusy}
+                      onClick={() => void handleManualImport()}
+                      icon={<ImageIcon className="size-3.5" />}
+                    >
+                      {manualBusy ? "Importing to vault..." : "Import to Character Vault"}
+                    </ShinyButton>
                   </div>
                 </>
               ) : (
@@ -876,23 +934,42 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                   <div
                     key={c.id}
                     onClick={() => handleSelect(c)}
+                    draggable
+                    onDragStart={(e) => { e.dataTransfer.setData("text/char-id", c.id); e.dataTransfer.effectAllowed = "move" }}
+                    onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer.types.includes("text/char-id")) setDragOverId(c.id) }}
+                    onDragLeave={() => setDragOverId((id) => (id === c.id ? null : id))}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setDragOverId(null)
+                      const fromId = e.dataTransfer.getData("text/char-id")
+                      if (fromId) handleReorder(fromId, c.id)
+                    }}
                     className={cn(
-                      "group relative flex flex-col gap-2 p-4 rounded-2xl border transition-all cursor-pointer shadow-xs",
+                      "group relative flex flex-col gap-2 p-4 rounded-2xl border transition-all cursor-grab active:cursor-grabbing shadow-xs",
                       isSelected
                         ? "border-indigo-500 dark:border-sky-400 bg-white dark:bg-[#16171e] ring-1 ring-indigo-500/20 shadow-md"
-                        : "border-[#d2d5de] dark:border-[#272832] bg-[#f0f1f5] dark:bg-[#14151b] hover:border-zinc-400 dark:hover:border-zinc-600"
+                        : "border-[#d2d5de] dark:border-[#272832] bg-[#f0f1f5] dark:bg-[#14151b] hover:border-zinc-400 dark:hover:border-zinc-600",
+                      dragOverId === c.id && "border-amber-500 bg-amber-500/10 ring-1 ring-amber-500/30"
                     )}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          className="size-9 rounded-xl flex items-center justify-center shrink-0 shadow-inner"
-                          style={{ backgroundColor: c.palette.primary }}
-                        >
-                          <span className="text-white text-xs font-bold uppercase">
-                            {c.name.slice(0, 2)}
-                          </span>
-                        </div>
+                        {c.portraitUrl ? (
+                          <img
+                            src={c.portraitUrl}
+                            alt={`${c.name} Profile`}
+                            className="size-9 rounded-xl object-cover shrink-0 shadow-inner border border-black/10 dark:border-white/10"
+                          />
+                        ) : (
+                          <div
+                            className="size-9 rounded-xl flex items-center justify-center shrink-0 shadow-inner"
+                            style={{ backgroundColor: c.palette.primary }}
+                          >
+                            <span className="text-white text-xs font-bold uppercase">
+                              {c.name.slice(0, 2)}
+                            </span>
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate">
@@ -991,12 +1068,20 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
             {/* Active Header & Quick Actions */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
               <div className="flex items-center gap-3">
-                <div
-                  className="size-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md"
-                  style={{ backgroundColor: activeChar.palette.primary }}
-                >
-                  <Star className="size-5 text-white fill-white" />
-                </div>
+                {activeChar.portraitUrl ? (
+                  <img
+                    src={activeChar.portraitUrl}
+                    alt={`${activeChar.name} Profile`}
+                    className="size-12 rounded-2xl object-cover shrink-0 shadow-md border border-black/10 dark:border-white/10"
+                  />
+                ) : (
+                  <div
+                    className="size-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md"
+                    style={{ backgroundColor: activeChar.palette.primary }}
+                  >
+                    <Star className="size-5 text-white fill-white" />
+                  </div>
+                )}
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold text-zinc-900 dark:text-white">
@@ -1068,7 +1153,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                   )}
                 >
                   <ImageIcon className="size-3.5" />
-                  <span>3D Hero Concept Portrait</span>
+                  <span>3D Hero Concept Portrait (Profile)</span>
                 </button>
               </div>
 
@@ -1214,7 +1299,7 @@ export function CharacterStudio({ selectedId, onSelectCharacter }: Props) {
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
                     <ImageIcon className="size-3.5 text-indigo-500" />
-                    3D Hero Concept Portrait (Pixar / Disney Stylized Render)
+                    3D Hero Concept Portrait · Profile Avatar (Pixar / Disney Stylized Render)
                   </span>
                   <div className="flex items-center gap-1.5">
                     {activeChar.portraitUrl && (

@@ -13,7 +13,7 @@ export interface AgentConfig {
   escalateModel?: string // consultant pattern: stronger model consulted ONCE on failure
 }
 
-export type AgentId = "script" | "image" | "voice" | "vision" | "monitor"
+export type AgentId = "script" | "image" | "voice" | "vision" | "monitor" | "renderer"
 
 export interface AgentDef {
   id: AgentId
@@ -127,6 +127,24 @@ You guard the channel against YouTube repetitive spam penalties and validate COP
 3. COPPA Compliance: Ensure 100% gentle, uplifting, kid-safe visuals.
 4. Auto Re-roll: Auto-trigger targeted keyframe regeneration with boosted prompt weights on failing frames.`
   },
+  {
+    id: "renderer",
+    name: "Video Renderer (Full Automation)",
+    role: "Subagent F: Local FFmpeg Compositor",
+    description: "Renders the finished scenes into a downloadable MP4 with a local ffmpeg server (Ken Burns + voice mix). No API needed — runs on this machine.",
+    capability: "monitor",
+    defaultBaseUrl: "http://127.0.0.1:5173",
+    defaultModel: "local-ffmpeg",
+    accentColor: "from-orange-500 to-rose-500",
+    defaultSkill: `# Local FFmpeg Video Renderer (Subagent F)
+
+You are Subagent F in the FULL AUTOMATION pipeline.
+
+## Job
+- Receives every scene (keyframe image + TTS audio + timing) after Subagents A–E finish.
+- Calls the local render server (POST /api/render) which composites the MP4: Ken Burns pan/zoom per scene, AAC voice track, concat, h264.
+- Produces the final video for one-click YouTube publish. No API key or endpoint needed — ffmpeg runs locally.`,
+  },
 ]
 
 const STORE_KEY = "yt-kids-agents-v5" // v5: migrate off Claude (quota exhausted) to GLM-5.2 escalation
@@ -162,7 +180,7 @@ export function loadConfigs(): Record<AgentId, AgentConfig | null> {
     const raw = localStorage.getItem(STORE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      const res: Record<AgentId, AgentConfig | null> = { script: null, image: null, voice: null, vision: null, monitor: null }
+      const res: Record<AgentId, AgentConfig | null> = { script: null, image: null, voice: null, vision: null, monitor: null, renderer: null }
       for (const def of AGENTS) {
         if (parsed[def.id]) {
           res[def.id] = {
@@ -185,6 +203,7 @@ export function loadConfigs(): Record<AgentId, AgentConfig | null> {
     voice: getDefaultConfig("voice"),
     vision: getDefaultConfig("vision"),
     monitor: getDefaultConfig("monitor"),
+    renderer: getDefaultConfig("renderer"),
   }
 }
 

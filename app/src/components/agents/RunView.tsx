@@ -16,6 +16,7 @@ import { AgentChatStream } from "./AgentChatStream"
 import { NodeCanvas } from "./NodeCanvas"
 import { AgentCard } from "./AgentCard"
 import { AGENTS, type AgentConfig, type AgentId } from "@/lib/agents"
+import type { ProductionMode } from "@/lib/mode"
 import type { Session } from "@/lib/pipeline"
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
   configs?: Record<AgentId, AgentConfig | null>
   onSaveConfig?: (id: AgentId, c: AgentConfig) => void
   configsOpen: boolean
+  mode?: ProductionMode
   onBack: () => void
   onNew: () => void
   onOpenConfigs: () => void
@@ -31,6 +33,8 @@ interface Props {
   onSendMessage: (text: string) => void
   onRetrySession?: () => void
   onRerollSceneKeyframe?: (sceneId: string) => void
+  onPasteSceneKeyframe?: (sceneId: string, dataUrl: string) => void
+  onGetAutoVideo?: () => string | null
 }
 
 export function RunView({
@@ -39,6 +43,7 @@ export function RunView({
   configs = {} as Record<AgentId, AgentConfig | null>,
   onSaveConfig,
   configsOpen,
+  mode = "auto",
   onBack,
   onNew,
   onOpenConfigs,
@@ -46,6 +51,8 @@ export function RunView({
   onSendMessage,
   onRetrySession,
   onRerollSceneKeyframe,
+  onPasteSceneKeyframe,
+  onGetAutoVideo,
 }: Props) {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [sideTab, setSideTab] = useState<"stream" | "script">("stream")
@@ -204,6 +211,9 @@ export function RunView({
             onOpenScriptTab={() => setSideTab("script")}
             onRetrySession={onRetrySession}
             onRerollSceneKeyframe={onRerollSceneKeyframe}
+            onPasteSceneKeyframe={onPasteSceneKeyframe}
+            mode={mode}
+            onDownloadAutoVideo={onGetAutoVideo}
           />
         </div>
       </main>
@@ -235,7 +245,7 @@ export function RunView({
 
               <div className="mt-4 flex-1 overflow-y-auto space-y-3 pr-1">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {AGENTS.map((agent) => (
+                  {(mode === "auto" ? AGENTS : AGENTS.filter((a) => a.id !== "renderer")).map((agent) => (
                     <AgentCard
                       key={agent.id}
                       agent={agent}

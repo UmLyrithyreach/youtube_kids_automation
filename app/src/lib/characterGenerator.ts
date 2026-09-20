@@ -21,18 +21,25 @@ export function extractCharacterProfile(prompt: string): CharacterPalette {
   let skinOrFur = "#fed7aa"
   let eyeColor = "#1e293b"
 
-  if (p.includes("glow") || p.includes("firefly") || p.includes("bot") || p.includes("robot")) {
+  if (p.includes("spidy") || p.includes("cat") || p.includes("kitten")) {
+    species = "Chibi Kitten Superhero"
+    skinOrFur = "#8fd5c5"
+    primary = "#8fd5c5"
+    secondary = "#f5f0e5"
+    accent = "#f97316"
+    eyeColor = "#f59e0b"
+  } else if (p.includes("glow") || p.includes("firefly") || p.includes("bot") || p.includes("robot")) {
     species = "Firefly Robot Companion"
-    skinOrFur = "#93c5fd"
-    primary = "#0284c7"
-    secondary = "#e0f2fe"
-    accent = "#f59e0b"
-    eyeColor = "#06b6d4"
+    skinOrFur = "#a6c7f2"
+    primary = "#a6c7f2"
+    secondary = "#1e293b"
+    accent = "#fed46e"
+    eyeColor = "#3af7f0"
   } else if (p.includes("bear") || p.includes("barnaby")) {
     species = "Musical Explorer Bear"
     skinOrFur = "#d97706"
-    primary = "#10b981"
-    secondary = "#fbbf24"
+    primary = "#d97706"
+    secondary = "#15803d"
     accent = "#f59e0b"
     eyeColor = "#451a03"
   } else if (p.includes("bunny") || p.includes("rabbit")) {
@@ -40,11 +47,13 @@ export function extractCharacterProfile(prompt: string): CharacterPalette {
     skinOrFur = "#f8fafc"
     accent = "#f472b6"
     primary = "#38bdf8"
-  } else if (p.includes("dragon") || p.includes("dino")) {
-    species = "Friendly Dino"
-    skinOrFur = "#86efac"
-    primary = "#059669"
-    accent = "#fbbf24"
+  } else if (p.includes("dragon") || p.includes("dino") || p.includes("rexy")) {
+    species = "Dino Adventurer"
+    skinOrFur = "#149058"
+    primary = "#149058"
+    secondary = "#a7d477"
+    accent = "#0086d6"
+    eyeColor = "#1e293b"
   }
 
   const words = prompt.trim().split(/\s+/).slice(0, 4).join(" ")
@@ -288,6 +297,70 @@ export function generateMotionPrompts(scenes: SceneBeat[], profile: CharacterPal
       ``
     )
   })
+
+  return lines.join("\n")
+}
+
+// ponytail: clips assumed ~10s; assemble reads real durations via ffprobe at
+// join time, so nothing to tune here. Upgrade path = per-clip target seconds.
+export function generateVeoClipPack(
+  scenes: SceneBeat[],
+  profile: CharacterPalette,
+  frozenPrompt: string
+): string {
+  const lines: string[] = [
+    `# VEO CLIP PACK — ${scenes.length} clips → one continuous scene`,
+    `# Mascot: ${profile.name} (${profile.species})`,
+    `# The frozen character block MUST appear verbatim in every clip prompt.`,
+    ``,
+    `## WORKFLOW`,
+    `1. Save the scene-01 keyframe from the storyboard (right-click thumbnail → Save image). It is clip 1's start frame — AI-generated, or paste your own with the Paste button on the storyboard.`,
+    `2. Google Flow → Frames to video: upload that start frame, paste CLIP 1's prompt → generate. Save as clips/clip-01.mp4.`,
+    `3. Run the assemble script below — it extracts each clip's LAST frame as the next clip's start frame (start-02.png, start-03.png, ...).`,
+    `4. In Flow, upload start-02.png as clip 2's start frame, paste CLIP 2's prompt → clips/clip-02.mp4. Repeat until all clips exist.`,
+    `5. Re-run the assemble script — it crossfade-joins all clips into master.mp4.`,
+    ``,
+  ]
+
+  scenes.forEach((s, i) => {
+    lines.push(
+      `## CLIP ${i + 1}/${scenes.length} — "${s.title}" — target ~${s.timingSeconds}s`,
+      `START FRAME: ${i === 0 ? "scene-01 keyframe (downloaded or pasted)" : `start-0${i + 1}.png (last frame of clip ${i}, auto-extracted)`}`,
+      `FROZEN CHARACTER BLOCK (verbatim): "${frozenPrompt}"`,
+      `PROMPT: ${i === 0 ? "" : `Continuation — ${profile.name} picks up exactly where the previous clip ended: same position, same outfit, same lighting and background. `}${s.visualPrompt}. ${s.motionPrompt || "Slow camera push with gentle pan matching character movement"}. Dialogue (lip-synced): "${s.voiceNarration}"`,
+      i < scenes.length - 1
+        ? `END STATE (next clip continues from this exact moment): ${s.characterAction}`
+        : `FINAL STATE (end of scene): ${s.characterAction}`,
+      ``
+    )
+  })
+
+  lines.push(
+    `## ASSEMBLE — save as veo-assemble.sh next to clips/ and run it`,
+    '```bash',
+    `#!/usr/bin/env bash`,
+    `set -e`,
+    `mkdir -p start`,
+    `count=$(ls clips/clip-*.mp4 2>/dev/null | wc -l)`,
+    `[ "$count" -eq 0 ] && { echo "Drop clips as clips/clip-01.mp4, clip-02.mp4, ... first"; exit 1; }`,
+    `# 1. last frame of every clip -> next clip's start frame`,
+    `i=1; while [ -f clips/clip-0$i.mp4 ]; do`,
+    `  ffmpeg -y -sseof -0.2 -i clips/clip-0$i.mp4 -update 1 -frames:v 1 start-0$((i+1)).png`,
+    `  i=$((i+1)); done`,
+    `[ "$count" -eq 1 ] && cp clips/clip-01.mp4 master.mp4 && exit 0`,
+    `# 2. join with 1s crossfades (offsets read from real clip lengths)`,
+    `out=clips/clip-01.mp4; i=2`,
+    `while [ $i -le $count ]; do`,
+    `  d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$out")`,
+    `  off=$(awk "BEGIN{printf \\"%.2f\\", $d-1}")`,
+    `  ffmpeg -y -i "$out" -i clips/clip-0$i.mp4 -filter_complex \\`,
+    `    "[0:v][1:v]xfade=transition=fade:duration=1:offset=$off[v]" \\`,
+    `    -map "[v]" -c:v libx264 -pix_fmt yuv420p "tmp-join-0$i.mp4"`,
+    `  out="tmp-join-0$i.mp4"; i=$((i+1)); done`,
+    `mv "tmp-join-0$count.mp4" master.mp4 && rm -f tmp-join-*.mp4`,
+    `echo "master.mp4 ready (xfade drops audio — lay TTS/music stems on top)"`,
+    '```',
+  )
 
   return lines.join("\n")
 }

@@ -11,6 +11,7 @@ import {
   Eye as VisionIcon,
   Shield,
   Music,
+  Film,
   ChevronUp,
   Volume2,
 } from "lucide-react"
@@ -32,6 +33,7 @@ const AGENT_ICONS: Record<AgentId, React.ComponentType<{ className?: string }>> 
   voice: Volume2,
   vision: VisionIcon,
   monitor: Shield,
+  renderer: Film,
 }
 
 export function AgentCard({ agent, config, onSave, status }: Props) {

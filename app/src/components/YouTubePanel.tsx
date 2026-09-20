@@ -13,10 +13,12 @@ import {
   ExternalLink,
   Copy,
   ClipboardCheck,
+  Download,
   Sparkles,
 } from "lucide-react"
 import { toast } from "sonner"
-import { MediaUploadDropzone } from "@/components/ui/MediaUploadDropzone"
+import { takeAutoHandoff, clearAutoHandoff, subscribeAutoHandoff } from "@/lib/autoHandoff"
+import { FileUploadCard, type UploadedFile } from "@/components/ui/file-upload-card"
 import { runVisionFromDataUrls } from "@/lib/byok"
 import { loadConfigs } from "@/lib/agents"
 import {
@@ -28,6 +30,7 @@ import {
   saveClientSecret,
   clearAuth,
   uploadVideo,
+  setThumbnail,
   type YtAuth,
   type UploadMeta,
 } from "@/lib/youtube"
@@ -47,7 +50,23 @@ export function YouTubePanel() {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [aiBusy, setAiBusy] = useState(false)
+  const [thumbBlob, setThumbBlob] = useState<Blob | null>(null)
   const bootRan = useRef(false)
+
+  // Auto-handoff: a finished full-automation render pre-fills the dropzone —
+  // user clicks straight to Publish. Runs on mount AND when a new render
+  // completes while this tab is open.
+  useEffect(() => {
+    const apply = () => {
+      const h = takeAutoHandoff()
+      if (!h) return
+      const f = new File([h.blob], h.fileName, { type: "video/mp4" })
+      setFileLocal(f)
+      toast.success(`Full automation finished — "${h.fileName}" is ready to publish`)
+    }
+    apply()
+    return subscribeAutoHandoff(apply)
+  }, [])
 
   useEffect(() => {
     if (bootRan.current) return
@@ -141,19 +160,106 @@ export function YouTubePanel() {
       const out = await runVisionFromDataUrls(
         vision,
         frames,
-        "You just watched key frames from a YouTube kids video. Write the upload metadata as JSON: {\"title\": string (max 95 chars, fun, emoji ok), \"description\": string (2-4 sentences, kid-friendly, what happens + gentle positive takeaway)}. JSON only, no markdown fences."
+        "You just watched key frames from a YouTube kids video. Write the upload metadata as JSON: {\"title\": string (max 95 chars, fun, emoji ok), \"description\": string (2-4 sentences, kid-friendly, what happens + gentle positive takeaway), \"hashtags\": string[] (exactly 10, no # symbol, mix broad reach like kidsvideos with specific topic tags matching what you saw — think what parents would search)}. JSON only, no markdown fences."
       )
       const m = out.match(/\{[\s\S]*\}/)
       if (!m) throw new Error("model didn't return JSON")
-      const parsed = JSON.parse(m[0]) as { title?: string; description?: string }
+      const parsed = JSON.parse(m[0]) as { title?: string; description?: string; hashtags?: string[] }
+      // YouTube: >60 hashtags on a video gets ALL ignored — cap at 15, prefix #
+      const tagLine = (parsed.hashtags || [])
+        .slice(0, 15)
+        .map((t) => `#${t.replace(/[^\p{L}\p{N}_]/gu, "")}`)
+        .filter((t) => t.length > 1)
+        .join(" ")
       setMeta((prev) => ({
         ...prev,
         title: parsed.title?.slice(0, 100) || prev.title,
-        description: parsed.description || prev.description,
+        description: [parsed.description || prev.description, tagLine].filter(Boolean).join("\n\n"),
       }))
-      toast.success("Title & description written from the video")
+      toast.success("Title, description & hashtags written from the video")
     } catch (e) {
       toast.error((e as Error).message || "Couldn't generate metadata")
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  // Thumbnail: AI watches candidate frames, picks the best moment, that exact
+  // timestamp is re-grabbed at full resolution and cropped to the target
+  // ratio (16:9 regular, 9:16 Shorts).
+  const onAiThumb = async () => {
+    if (!fileLocal) {
+      toast.error("Drop the video file first — the AI picks a frame from it")
+      return
+    }
+    setAiBusy(true)
+    try {
+      const url = URL.createObjectURL(fileLocal)
+      const video = document.createElement("video")
+      video.muted = true
+      video.src = url
+      await new Promise<void>((res, rej) => {
+        video.onloadedmetadata = () => res()
+        video.onerror = () => rej(new Error("browser can't decode this video for frame grabs"))
+      })
+      const stamps = [0.1, 0.3, 0.5, 0.7, 0.9].map((f) => Math.min(video.duration * f, video.duration - 0.1))
+      const frames: string[] = []
+      const small = document.createElement("canvas")
+      small.width = 480
+      small.height = Math.round((480 * video.videoHeight) / Math.max(video.videoWidth, 1))
+      const sctx = small.getContext("2d")!
+      for (const t of stamps) {
+        await new Promise<void>((res, rej) => {
+          video.onseeked = () => res()
+          video.onerror = () => rej(new Error("seek failed"))
+          video.currentTime = t
+        })
+        sctx.drawImage(video, 0, 0, small.width, small.height)
+        frames.push(small.toDataURL("image/jpeg", 0.7))
+      }
+
+      const vision = loadConfigs().vision
+      if (!vision?.baseUrl || !vision.apiKey) {
+        toast.error("Configure the Vision agent first (Agents tab → Visual Prompter & Framing)")
+        return
+      }
+      // ponytail: lettered grid instead of per-image indices — some vision
+      // models skip image order; upgrade path = single-image calls per frame.
+      const out = await runVisionFromDataUrls(
+        vision,
+        frames,
+        `These are 5 frames (A-E in order) from a kids YouTube video at ${Math.round(video.duration)}s. Pick the SINGLE best thumbnail frame: clear view of the main character's face, bright, simple composition. Reply ONLY the letter A, B, C, D or E.`
+      )
+      const idx = Math.max(0, "ABCDE".indexOf(out.trim().toUpperCase().charAt(0)))
+      const picked = stamps[idx] ?? stamps[2]
+
+      // Re-grab the chosen moment at full resolution, crop to ratio.
+      const crop = meta.format === "shorts" ? 9 / 16 : 16 / 9
+      await new Promise<void>((res, rej) => {
+        video.onseeked = () => res()
+        video.onerror = () => rej(new Error("seek failed"))
+        video.currentTime = picked
+      })
+      const vw = video.videoWidth
+      const vh = video.videoHeight
+      let sw = vw
+      let sh = Math.round(vw / crop)
+      if (sh > vh) {
+        sh = vh
+        sw = Math.round(vh * crop)
+      }
+      const big = document.createElement("canvas")
+      // Thumbnails render max 1280 wide — cap to keep uploads small.
+      big.width = Math.min(1280, sw)
+      big.height = Math.round((Math.min(1280, sw) * sh) / sw)
+      big.getContext("2d")!.drawImage(video, Math.round((vw - sw) / 2), Math.round((vh - sh) / 2), sw, sh, 0, 0, big.width, big.height)
+      URL.revokeObjectURL(url)
+      const blob = await new Promise<Blob | null>((res) => big.toBlob(res, "image/jpeg", 0.9))
+      if (!blob) throw new Error("couldn't render the thumbnail image")
+      setThumbBlob(blob)
+      toast.success(`Thumbnail from frame ${"ABCDE"[idx] ?? "C"} (${Math.round(picked)}s)`)
+    } catch (e) {
+      toast.error((e as Error).message || "Couldn't generate thumbnail")
     } finally {
       setAiBusy(false)
     }
@@ -167,13 +273,48 @@ export function YouTubePanel() {
     setUploading(true)
     setProgress(0)
     uploadVideo(fileLocal, meta, setProgress)
-      .then((id) => {
+      .then(async (id) => {
         setVideoUrl(`https://youtu.be/${id}`)
         toast.success("Uploaded to YouTube 🎉")
+        if (thumbBlob) {
+          try {
+            await setThumbnail(id, thumbBlob)
+            toast.success("Thumbnail set")
+          } catch (e) {
+            toast.error(`Thumbnail failed (${(e as Error).message}) — set it manually in Studio`)
+          }
+        }
       })
       .catch((e: Error) => toast.error(e.message))
       .finally(() => setUploading(false))
   }
+
+  const downloadThumb = () => {
+    if (!thumbBlob) return
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(thumbBlob)
+    a.download = `${meta.title.slice(0, 40).replace(/[^\w-]+/g, "_") || "thumbnail"}-thumb.jpg`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const clearVideoFile = () => {
+    setFileLocal(null)
+    setThumbBlob(null)
+    clearAutoHandoff()
+  }
+
+  // Single-video upload: derive the card's tracked-file list from existing state.
+  const uploadFiles: UploadedFile[] = fileLocal
+    ? [
+        {
+          id: "video",
+          file: fileLocal,
+          progress,
+          status: uploading ? "uploading" : videoUrl ? "completed" : "ready",
+        },
+      ]
+    : []
 
   return (
     <section className="mx-auto w-full max-w-3xl px-6 py-8">
@@ -269,14 +410,49 @@ export function YouTubePanel() {
             </details>
           )}
 
-          <MediaUploadDropzone
+          <FileUploadCard
+            single
             accept="video/*"
-            onFileSelect={setFileLocal}
-            onClear={() => setFileLocal(null)}
-            label={fileLocal ? fileLocal.name : "Drop your finished video here"}
-            sublabel={auth ? "MP4 or WebM — uploaded as-is" : "Manual mode: Studio copies it from your computer"}
-            className="min-h-[100px]"
+            formats="MP4 or WebM video — uploaded straight to your channel."
+            files={uploadFiles}
+            onFilesChange={(fs) => {
+              const f = fs[0]
+              if (!f) return
+              setFileLocal(f)
+              setThumbBlob(null)
+              clearAutoHandoff()
+              setVideoUrl(null)
+            }}
+            onFileRemove={() => clearVideoFile()}
+            className="max-w-none"
           />
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void onAiThumb()}
+              disabled={aiBusy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 dark:border-indigo-500/40 bg-indigo-50 dark:bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 disabled:opacity-50 transition-colors"
+            >
+              {aiBusy ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+              {aiBusy ? "Picking frame…" : meta.format === "shorts" ? "AI thumbnail (9:16)" : "AI thumbnail (16:9)"}
+            </button>
+            {thumbBlob && (
+              <>
+                <img src={URL.createObjectURL(thumbBlob)} alt="thumbnail preview" className="h-14 rounded border border-[#d2d5de] dark:border-[#272832]" />
+                <button
+                  type="button"
+                  onClick={downloadThumb}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#d2d5de] dark:border-[#272832] px-2.5 py-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 hover:bg-[#e9ebf2] dark:hover:bg-[#24252d] transition-colors"
+                >
+                  <Download className="size-3" /> Download
+                </button>
+                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {auth ? "auto-set after upload" : "manual mode: upload in Studio after publishing"}
+                </span>
+              </>
+            )}
+          </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 sm:col-span-2">
@@ -375,11 +551,6 @@ export function YouTubePanel() {
               </a>
             )}
           </div>
-          {uploading && (
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#e2e4ea] dark:bg-[#1c1d25]">
-              <div className="h-full rounded-full bg-red-600 transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          )}
           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
             Manual mode: metadata is copied to your clipboard and YouTube Studio opens — pick the file there and paste.
             One-click mode needs the OAuth client above; tokens stay in this browser. Unverified API projects upload

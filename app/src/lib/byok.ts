@@ -143,7 +143,8 @@ const CHAT_FALLBACK_MODELS = ["GLM-5.2", "ag/gemini-3.8-flash-high", "ag/gemini-
 async function runChatWithFallback(
   c: AgentConfig,
   messages: unknown[],
-  what: string
+  what: string,
+  timeoutMs = 15_000
 ): Promise<string> {
   const candidates = [c.model, c.escalateModel, ...CHAT_FALLBACK_MODELS]
     .filter((m): m is string => Boolean(m))
@@ -152,11 +153,18 @@ async function runChatWithFallback(
   for (const model of candidates) {
     if (seen.has(model)) continue
     seen.add(model)
-    const res = await fetchRetry(endpointUrl(), {
-      method: "POST",
-      headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
-      body: JSON.stringify({ model, messages, stream: false }),
-    })
+    let res: Response
+    try {
+      res = await fetchRetry(endpointUrl(), {
+        method: "POST",
+        headers: { ...headers(c), "x-target-url": targetFor(c, "/v1/chat/completions") },
+        body: JSON.stringify({ model, messages, stream: false }),
+      }, 2, timeoutMs)
+    } catch (e) {
+      // timeout/network on one candidate shouldn't kill the fallback chain
+      errors.push(`${model}: ${(e as Error).message}`)
+      continue
+    }
     if (res.ok) return parseChatResponse(res)
     errors.push(`${model}: HTTP ${res.status}`)
     // non-quota client errors (400/401/403/404) = config problem, don't rotate
@@ -442,7 +450,9 @@ export async function runVisionFromDataUrls(
   const messages: unknown[] = []
   if (c.skill?.trim()) messages.push({ role: "system", content: c.skill.trim() })
   messages.push({ role: "user", content })
-  return runChatWithFallback(c, messages, "Vision agent")
+  // ponytail: multi-frame base64 vision calls take 30-120s through combo
+  // routers — 15s text timeout kills them mid-flight. Same ceiling as image gen.
+  return runChatWithFallback(c, messages, "Vision agent", 120_000)
 }
 export async function runVision(
   c: AgentConfig,

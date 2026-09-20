@@ -23,6 +23,7 @@ import {
 } from "lucide-react"
 import { gsap } from "gsap"
 import type { Session } from "@/lib/pipeline"
+import type { ProductionMode } from "@/lib/mode"
 import {
   extractCharacterProfile,
 } from "@/lib/characterGenerator"
@@ -36,6 +37,9 @@ interface Props {
   onOpenConfigs: () => void
   onRetrySession?: () => void
   onRerollSceneKeyframe?: (sceneId: string) => void
+  onPasteSceneKeyframe?: (sceneId: string, dataUrl: string) => void
+  mode?: ProductionMode
+  onDownloadAutoVideo?: () => string | null // object URL of the rendered MP4 (Full Automation)
 }
 
 export function NodeCanvas({
@@ -44,6 +48,9 @@ export function NodeCanvas({
   onOpenConfigs,
   onRetrySession,
   onRerollSceneKeyframe,
+  onPasteSceneKeyframe,
+  mode = "auto",
+  onDownloadAutoVideo,
 }: Props) {
   const s = session
   const [scale, setScale] = useState(0.88)
@@ -67,6 +74,12 @@ export function NodeCanvas({
   const imageActive = s.stage === "image"
   const imageDone = s.stage === "done" && (!!s.characterSheetUrl || !!s.deliverable)
   const allDone = s.stage === "done" && !!s.script
+  // Full Automation render node state (Subagent F)
+  const auto = s.autoRender
+  const renderActive = !!auto && auto.status === "running"
+  const renderDone = !!auto && auto.status === "done"
+  const renderError = !!auto && auto.status === "error"
+  const isAutoMode = mode === "auto"
 
   // Auto-scroll script preview as text streams in
   useEffect(() => {
@@ -155,6 +168,7 @@ ${s.script || s.prompt}`
   const n5 = { x: 740, y: 385, w: 410, h: 200 }  // Interactive 360 Angle Inspector
   const n6 = { x: 1210, y: 100, w: 350, h: 480 } // Master Deliverable Pack
   const n7 = { x: 360, y: 610, w: 1200, h: 340 } // Storyboard Keyframe Reel & Audio Stems
+  const n8 = { x: 1210, y: 630, w: 350, h: 290 } // Video Render (Full Automation, Subagent F)
 
   // Wire bezier calculations
   const wire = (fromX: number, fromY: number, toX: number, toY: number) => {
@@ -396,6 +410,18 @@ ${s.script || s.prompt}`
             stroke={allDone ? "#10b981" : "#cbd5e1"}
             strokeWidth={2}
           />
+
+          {/* Wire 7 -> 8 (Storyboard Reel -> Video Render, Full Automation) */}
+          {isAutoMode && (
+            <path
+              d={wire(n7.x + n7.w, n7.y + 100, n8.x, n8.y + 80)}
+              fill="none"
+              stroke={renderDone ? "#f97316" : "#cbd5e1"}
+              strokeWidth={renderActive ? 2.5 : 1.5}
+              strokeDasharray={renderActive ? "6,6" : undefined}
+              className={renderActive ? "animate-[dash_1s_linear_infinite]" : undefined}
+            />
+          )}
         </svg>
 
         {/* ----------------- Node 1: Input Prompt ----------------- */}
@@ -764,6 +790,7 @@ ${s.script || s.prompt}`
                 scenes={s.scenes}
                 format={s.format}
                 onRerollScene={onRerollSceneKeyframe}
+                onPasteScene={onPasteSceneKeyframe}
               />
             ) : s.stage === "audio" || s.stage === "image" ? (
               <WaveformPulseLoader />
@@ -774,6 +801,84 @@ ${s.script || s.prompt}`
             )}
           </div>
         </div>
+
+        {/* ----------------- Node 8: Video Render (Subagent F, Full Automation only) ----------------- */}
+        {isAutoMode && (
+          <div
+            data-canvas-interactive
+            className={cn(
+              "absolute rounded-2xl border bg-card/95 p-4 shadow-xl backdrop-blur-md pointer-events-auto transition-all hover:shadow-2xl",
+              renderActive
+                ? "border-orange-400 ring-2 ring-orange-400/20 shadow-orange-500/10"
+                : renderDone
+                ? "border-emerald-500/80 ring-2 ring-emerald-500/20"
+                : renderError
+                ? "border-rose-500/80"
+                : "border-border"
+            )}
+            style={{ left: n8.x, top: n8.y, width: n8.w }}
+          >
+            {/* Input Port */}
+            <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-orange-500 shadow-sm" />
+            <div className="flex items-center justify-between pb-2 border-b border-border/60">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 dark:text-orange-400">
+                <Film className="size-3.5" />
+                8. Video Render (Subagent F)
+              </div>
+              <span
+                className={cn(
+                  "rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                  renderActive
+                    ? "bg-orange-500/10 text-orange-600"
+                    : renderDone
+                    ? "bg-emerald-500/10 text-emerald-600"
+                    : renderError
+                    ? "bg-rose-500/10 text-rose-600"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {renderActive ? "Rendering..." : renderDone ? "MP4 Ready" : renderError ? "Render Failed" : "Standby"}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground text-[11px]">Engine</span>
+                <span className="font-semibold text-foreground">Local FFmpeg</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground text-[11px]">Output</span>
+                <span className="font-mono font-medium text-foreground">
+                  {s.format === "9:16" ? "1080x1920 MP4" : "1920x1080 MP4"}
+                </span>
+              </div>
+              <div className="rounded-xl bg-muted/40 border border-border/50 p-2.5">
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  {auto?.progress ||
+                    (allDone
+                      ? "Waiting for render — Subagents A–E delivered all scenes."
+                      : "Queued: renders every scene (Ken Burns + voice mix) after Subagents A–E finish.")}
+                </p>
+              </div>
+              {renderDone && onDownloadAutoVideo && (
+                <a
+                  href={onDownloadAutoVideo() ?? undefined}
+                  download={`${s.name.replace(/[^\w-]+/g, "_").slice(0, 40) || "video"}.mp4`}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-orange-600 py-2 text-xs font-semibold text-white shadow-sm hover:bg-orange-500 transition-colors"
+                >
+                  <Download className="size-3.5" /> Download rendered MP4
+                </a>
+              )}
+              {renderDone && (
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Pre-attached to YouTube Publish automatically.
+                </p>
+              )}
+            </div>
+            {/* Output Port */}
+            <div className="absolute -right-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-emerald-500 shadow-sm" />
+          </div>
+        )}
       </div>
     </div>
   )

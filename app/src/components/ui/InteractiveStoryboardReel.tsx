@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { motion } from "motion/react"
-import { Play, Pause, RefreshCw, Volume2, Clock, CheckCircle2 } from "lucide-react"
+import { Play, Pause, RefreshCw, ClipboardPaste, Volume2, Clock, CheckCircle2 } from "lucide-react"
 import { type SceneBeat } from "@/lib/characterGenerator"
 import { cn } from "@/lib/utils"
 
@@ -9,6 +9,7 @@ interface Props {
   activeSceneId?: string
   onSelectScene?: (id: string) => void
   onRerollScene?: (id: string) => void
+  onPasteScene?: (id: string, dataUrl: string) => void
   format?: "16:9" | "9:16"
   className?: string
 }
@@ -18,6 +19,7 @@ export function InteractiveStoryboardReel({
   activeSceneId,
   onSelectScene,
   onRerollScene,
+  onPasteScene,
   format = "16:9",
   className,
 }: Props) {
@@ -36,6 +38,13 @@ export function InteractiveStoryboardReel({
       audio.onended = () => setPlayingAudioId(null)
       audio.play().catch(() => setPlayingAudioId(null))
     }
+  }
+
+  const pasteImage = (sceneId: string, file: File | undefined) => {
+    if (!file || !file.type.startsWith("image/")) return
+    const reader = new FileReader()
+    reader.onload = () => onPasteScene?.(sceneId, String(reader.result))
+    reader.readAsDataURL(file)
   }
 
   return (
@@ -152,6 +161,32 @@ export function InteractiveStoryboardReel({
                     <span className="text-[10px]">Re-roll</span>
                   </button>
                 )}
+
+                {onPasteScene && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      document.getElementById(`paste-input-${scene.id}`)?.click()
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 text-xs transition-colors"
+                    title="Paste your own keyframe (AI image or file) for this scene"
+                  >
+                    <ClipboardPaste className="size-3" />
+                    <span className="text-[10px]">Paste</span>
+                  </button>
+                )}
+                <input
+                  id={`paste-input-${scene.id}`}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    pasteImage(scene.id, e.target.files?.[0])
+                    e.target.value = ""
+                  }}
+                />
               </div>
             </motion.div>
           )

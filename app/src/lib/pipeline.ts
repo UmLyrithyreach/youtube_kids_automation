@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
+import { setAutoHandoff } from "./autoHandoff"
 import { loadConfigs, saveConfigs, AGENTS, type AgentConfig, type AgentId } from "./agents"
 import { probeAgent, runScript, runImage, runKeyframeImage, runVision, synthesizeSpeech, extractFileText } from "./byok"
 import {
@@ -9,7 +10,7 @@ import {
   generateKidScreenplay,
   generateStructuredScreenplay,
   generateFfmpegScript,
-  generateMotionPrompts,
+  generateVeoClipPack,
 } from "./characterGenerator"
 import { getSelectedCharacter, loadCharacterVault, build360TurnaroundPrompt } from "./characterVault"
 
@@ -71,6 +72,12 @@ export interface Session {
   imageError?: string
   ffmpegScript?: string
   motionPrompts?: string
+  autoRender?: {
+    status: "running" | "done" | "error"
+    progress: string
+    videoBlobKey?: string // in-memory object URL held by App-level store
+    error?: string
+  }
   deliverable: Deliverable | null
   agentMessages?: AgentMessage[]
   createdAt: number
@@ -285,7 +292,12 @@ function loadSessions(): Session[] {
 }
 
 function persistSessions(sessions: Session[]) {
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.slice(0, 30)))
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.slice(0, 30)))
+  } catch {
+    // QuotaExceeded — pasted keyframes are large data: URLs; keep session in
+    // memory only. ponytail: oldest sessions drop silently, upgrade = IndexedDB.
+  }
 }
 
 export function useStudio() {
@@ -294,6 +306,12 @@ export function useStudio() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [findings, setFindings] = useState<MonitorFinding[] | null>(null)
   const [probing, setProbing] = useState(false)
+  // Live session mirror for async watchers (full-automation render waiter) —
+  // state alone goes stale inside long closures.
+  const sessionsRef = useRef<Session[]>(sessions)
+  sessionsRef.current = sessions
+  // Finished-MP4 object URLs per session, in-memory only (not persisted).
+  const videoUrls = useRef<Map<string, string>>(new Map())
 
   const saveConfig = useCallback((id: AgentId, c: AgentConfig) => {
     setConfigs((prev) => {
@@ -333,6 +351,23 @@ export function useStudio() {
       }
       patchSession(sessionId, (prev) => ({
         agentMessages: [...(prev.agentMessages || ensureSessionMessages(prev)), userMsg, replyMsg],
+      }))
+    },
+    [patchSession]
+  )
+
+  const pushAutoMsg = useCallback(
+    (sessionId: string, content: string) => {
+      const msg: AgentMessage = {
+        id: `${Date.now()}-auto`,
+        agentId: "voice",
+        agentName: "Full Automation",
+        type: "output",
+        content,
+        timestamp: Date.now(),
+      }
+      patchSession(sessionId, (prev) => ({
+        agentMessages: [...(prev.agentMessages || ensureSessionMessages(prev)), msg],
       }))
     },
     [patchSession]
@@ -597,7 +632,11 @@ ${context ? `\nContext from attached images/files:\n${context.slice(0, 4000)}` :
         // ⚡ Step 5: FFmpeg Assembly Engine
         patchSession(id, { stage: "assembly" })
         const ffmpegScript = generateFfmpegScript(keyframeScenes, targetFormat)
-        const motionPrompts = generateMotionPrompts(keyframeScenes, profile)
+        const motionPrompts = generateVeoClipPack(
+          keyframeScenes,
+          profile,
+          frozenPrompt
+        )
         pushMsg("monitor", "tool", "Generating 2.5D camera zoompan commands & dual 16:9 + 9:16 cut script...", "FFmpeg Assembly Engine")
 
         // ⚡ Final Deliverable Packaging
@@ -703,6 +742,87 @@ ${context ? `\nContext from attached images/files:\n${context.slice(0, 4000)}` :
     [executeRun]
   )
 
+  const runAutoRender = useCallback(
+    async (id: string) => {
+      const waitStage = (stage: Stage, timeoutMs: number) =>
+        new Promise<void>((resolve, reject) => {
+          const t0 = Date.now()
+          const tick = () => {
+            const s = sessionsRef.current.find((x) => x.id === id)
+            if (!s) return reject(new Error("session vanished"))
+            if (s.stage === stage) return resolve()
+            if (s.stage === "error") return reject(new Error(s.stageError || "pipeline failed"))
+            if (Date.now() - t0 > timeoutMs) return reject(new Error(`timed out waiting for ${stage}`))
+            setTimeout(tick, 700)
+          }
+          tick()
+        })
+
+      const setAuto = (patch: Partial<NonNullable<Session["autoRender"]>>) =>
+        patchSession(id, (prev) => ({ autoRender: { ...(prev.autoRender ?? { status: "running", progress: "" }), ...patch } }))
+
+      try {
+        setAuto({ status: "running", progress: "Waiting for AI production (script, keyframes, voice)…" })
+        await waitStage("done", 15 * 60_000)
+
+        const s = sessionsRef.current.find((x) => x.id === id)
+        const scenes = (s?.scenes || []).filter((sc) => sc.timingSeconds > 0)
+        if (!scenes.length) throw new Error("no scenes produced by the pipeline")
+
+        setAuto({ progress: `Rendering ${scenes.length} scenes with local ffmpeg…` })
+        const res = await fetch("/api/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            format: s?.format || "16:9",
+            scenes: scenes.map((sc) => ({
+              timingSeconds: sc.timingSeconds,
+              keyframeUrl: sc.keyframeUrl,
+              audioUrl: sc.audioUrl,
+            })),
+          }),
+        })
+        if (!res.ok) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string }
+          throw new Error(j.error || `render server HTTP ${res.status}`)
+        }
+        const blob = await res.blob()
+
+        // ponytail: object URL only in memory — page reload clears it (session
+        // re-render via "Render again" button); upgrade path = IndexedDB.
+        const url = URL.createObjectURL(blob)
+        videoUrls.current.set(id, url)
+        setAuto({ status: "done", progress: "Finished MP4 ready", videoBlobKey: url })
+        setAutoHandoff({
+          sessionId: id,
+          fileName: `${(s?.name || "video").replace(/[^\w-]+/g, "_").slice(0, 40)}.mp4`,
+          blob,
+        })
+        pushAutoMsg(id, `Full automation complete — finished MP4 rendered locally (${(blob.size / 1048576).toFixed(1)} MB). Open YouTube Publish to upload.`)
+      } catch (e) {
+        setAuto({ status: "error", error: (e as Error).message })
+        pushAutoMsg(id, `Full automation render failed: ${(e as Error).message}`)
+      }
+    },
+    [patchSession]
+  )
+
+  /** FULL AUTOMATION: AI script + keyframes + TTS (existing executeRun), then
+   * local ffmpeg render → finished MP4, held in memory for one-click publish. */
+  const makeMovieAuto = useCallback(
+    async (
+      idea: string,
+      attachments: File[] = [],
+      characterId?: string,
+      format: "16:9" | "9:16" = "16:9"
+    ): Promise<string> => {
+      const id = await makeMovie(idea, attachments, characterId, format)
+      void runAutoRender(id)
+      return id
+    },
+    [makeMovie, runAutoRender]
+  )
+
   const retrySession = useCallback(
     (id: string) => {
       setSessions((prev) => {
@@ -763,6 +883,30 @@ ${context ? `\nContext from attached images/files:\n${context.slice(0, 4000)}` :
     [patchSession]
   )
 
+  /** User pastes their own keyframe image (from any AI tool or file) onto a
+   * scene — replaces the generated keyframe. dataUrl is a data: or object URL. */
+  const pasteSceneKeyframe = useCallback(
+    (sessionId: string, sceneId: string, dataUrl: string) => {
+      patchSession(sessionId, (prev) => {
+        if (!prev.scenes) return {}
+        const idx = prev.scenes.findIndex((sc) => sc.id === sceneId)
+        if (idx === -1) return {}
+        const nextScenes = [...prev.scenes]
+        nextScenes[idx] = {
+          ...nextScenes[idx],
+          keyframeUrl: dataUrl,
+          qcStatus: "passed",
+          qcDetails: "Keyframe pasted by user (external AI or local file).",
+        }
+        return {
+          scenes: nextScenes,
+          deliverable: prev.deliverable ? { ...prev.deliverable, scenes: nextScenes } : null,
+        }
+      })
+    },
+    [patchSession]
+  )
+
   const removeSession = useCallback((id: string) => {
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== id)
@@ -771,6 +915,11 @@ ${context ? `\nContext from attached images/files:\n${context.slice(0, 4000)}` :
     })
     setActiveId((cur) => (cur === id ? null : cur))
   }, [])
+
+  const getAutoVideo = useCallback(
+    (id: string): string | null => videoUrls.current.get(id) ?? null,
+    []
+  )
 
   const runMonitors = useCallback(async () => {
     setProbing(true)
@@ -792,7 +941,7 @@ ${context ? `\nContext from attached images/files:\n${context.slice(0, 4000)}` :
   return {
     configs, saveConfig,
     sessions, activeId, setActiveId,
-    makeMovie, retrySession, rerollSceneKeyframe, renameSession, removeSession,
+    makeMovie, makeMovieAuto, getAutoVideo, retrySession, rerollSceneKeyframe, pasteSceneKeyframe, renameSession, removeSession,
     sendMessageToAgents,
     findings, probing, runMonitors,
   }

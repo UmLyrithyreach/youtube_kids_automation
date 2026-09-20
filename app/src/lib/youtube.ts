@@ -250,3 +250,22 @@ export async function uploadVideo(
     xhr.send(file)
   })
 }
+
+// Custom thumbnail for an uploaded video. youtube.upload scope covers
+// thumbnails.set; accepts the JPEG blob rendered in YouTubePanel.
+export async function setThumbnail(videoId: string, blob: Blob): Promise<void> {
+  const token = await getAccessToken()
+  const res = await fetch("/cors-proxy/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": blob.type || "image/jpeg",
+      "x-target-url": `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`,
+    },
+    body: blob,
+  })
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 160)
+    throw new Error(`thumbnail set failed: HTTP ${res.status} ${detail}`)
+  }
+}

@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from "motion/react"
 import { Toaster, toast } from "sonner"
 import { PromptInput } from "@/components/ui/ai-chat-input"
 import { FormatToggleSwitcher } from "@/components/ui/FormatToggleSwitcher"
+import { ModeToggleSwitcher } from "@/components/ui/ModeToggleSwitcher"
+import { loadMode, saveMode, type ProductionMode } from "@/lib/mode"
 import { AgentCard } from "@/components/agents/AgentCard"
 import { RunView } from "@/components/agents/RunView"
 import { HistoryTabs, RunningBanner } from "@/components/agents/HistoryTabs"
@@ -32,6 +34,17 @@ export default function App() {
   const [characters, setCharacters] = useState<Character[]>(() => loadCharacterVault())
   const [selectedChar, setSelectedChar] = useState<Character | null>(() => getSelectedCharacter())
   const [selectedFormat, setSelectedFormat] = useState<"16:9" | "9:16">("16:9")
+  const [autoIdea, setAutoIdea] = useState("")
+  const [mode, setMode] = useState<ProductionMode>(() => loadMode())
+
+  const handleModeChange = (m: ProductionMode) => {
+    setMode(m)
+    saveMode(m)
+  }
+
+  // Video Renderer (Subagent F) is a Full-Automation-only agent: local ffmpeg
+  // render is the automation engine; Manual mode users assemble themselves.
+  const visibleAgents = mode === "auto" ? AGENTS : AGENTS.filter((a) => a.id !== "renderer")
 
   const [isDark, setIsDark] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
@@ -62,11 +75,23 @@ export default function App() {
     setCharacters(loadCharacterVault())
   }
 
-  const handleSend = (message: string, meta: { attachments: File[] }) => {
-    toast.success(`Starting production in ${selectedFormat === "9:16" ? "9:16 Shorts" : "16:9 Long-Form"} mode!`)
-    void studio.makeMovie(message, meta.attachments, selectedChar?.id, selectedFormat)
+  // FULL AUTOMATION: one click → AI production + local ffmpeg render + auto
+  // handoff to YouTube Publish with the finished MP4 pre-attached.
+  const handleSendAuto = (message: string, meta: { attachments: File[] }) => {
+    toast.success(`Full automation: starting in ${selectedFormat === "9:16" ? "9:16 Shorts" : "16:9 Long-Form"} mode!`)
+    void studio.makeMovieAuto(message, meta.attachments, selectedChar?.id, selectedFormat)
   }
 
+  // Single submit path: Manual runs the AI pipeline only; Full Automation
+  // additionally renders the MP4 locally and pre-attaches it to YouTube Publish.
+  const handleSend = (message: string, meta: { attachments: File[] }) => {
+    if (mode === "auto") {
+      handleSendAuto(message, meta)
+    } else {
+      toast.success(`Starting production in ${selectedFormat === "9:16" ? "9:16 Shorts" : "16:9 Long-Form"} mode!`)
+      void studio.makeMovie(message, meta.attachments, selectedChar?.id, selectedFormat)
+    }
+  }
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-y-auto text-zinc-900 dark:text-zinc-100 antialiased selection:bg-zinc-900 selection:text-white dark:selection:bg-zinc-100 dark:selection:text-zinc-900">
       <ConstellationGrid className="fixed inset-0 pointer-events-none z-0 h-full w-full" />
@@ -80,6 +105,7 @@ export default function App() {
               configs={studio.configs}
               onSaveConfig={studio.saveConfig}
               configsOpen={showConfigs}
+              mode={mode}
               onBack={() => studio.setActiveId(null)}
               onNew={() => studio.setActiveId(null)}
               onOpenConfigs={() => setShowConfigs((v) => !v)}
@@ -87,6 +113,8 @@ export default function App() {
               onSendMessage={(text) => studio.sendMessageToAgents(active.id, text)}
               onRetrySession={() => studio.retrySession(active.id)}
               onRerollSceneKeyframe={(sceneId) => studio.rerollSceneKeyframe(active.id, sceneId)}
+              onPasteSceneKeyframe={(sceneId, dataUrl) => studio.pasteSceneKeyframe(active.id, sceneId, dataUrl)}
+              onGetAutoVideo={() => studio.getAutoVideo(active.id)}
             />
           </motion.div>
         ) : (
@@ -231,10 +259,18 @@ export default function App() {
                             : "bg-[#e2e4ea] dark:bg-[#1c1d25] text-zinc-700 dark:text-zinc-300 hover:bg-[#d6d9e1] dark:hover:bg-[#252631] border border-[#d0d3dc] dark:border-[#2a2b35]"
                         )}
                       >
-                        <span
-                          className="size-2 rounded-full shrink-0"
-                          style={{ backgroundColor: c.palette.primary }}
-                        />
+                        {c.portraitUrl ? (
+                          <img
+                            src={c.portraitUrl}
+                            alt={c.name}
+                            className="size-3.5 rounded-full object-cover shrink-0 border border-black/20"
+                          />
+                        ) : (
+                          <span
+                            className="size-2 rounded-full shrink-0"
+                            style={{ backgroundColor: c.palette.primary }}
+                          />
+                        )}
                         <span>{c.name}</span>
                       </button>
                     ))}
@@ -250,6 +286,16 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Production Mode Switcher (Full Automation vs Manual Video Scripting) */}
+                <div className="flex w-full flex-col items-center gap-2 pt-1">
+                  <ModeToggleSwitcher value={mode} onChange={handleModeChange} />
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {mode === "auto"
+                      ? "One click: AI production → local ffmpeg render → MP4 pre-attached to YouTube Publish."
+                      : "Agents write script, keyframes and stems — you assemble and render yourself."}
+                  </p>
+                </div>
+
                 {/* Format Toggle Switcher (16:9 Long-Form vs 9:16 Shorts) */}
                 <div className="flex w-full items-center justify-center pt-1">
                   <FormatToggleSwitcher
@@ -260,6 +306,8 @@ export default function App() {
 
                 <div className="flex w-full justify-center py-1">
                   <PromptInput
+                    value={autoIdea}
+                    onChange={(v) => setAutoIdea(v)}
                     onSubmit={handleSend}
                     placeholder={
                       selectedChar
@@ -298,7 +346,7 @@ export default function App() {
                   </div>
                   {showConfigs && (
                     <div className="mt-4 grid w-full grid-cols-1 gap-5 md:grid-cols-2">
-                      {AGENTS.map((agent) => (
+                      {visibleAgents.map((agent) => (
                         <AgentCard
                           key={agent.id}
                           agent={agent}

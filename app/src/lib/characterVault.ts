@@ -22,37 +22,48 @@ export interface Character {
   isDefault?: boolean
 }
 
+const SPIDYCAT_PALETTE: CharacterPalette = {
+  name: "SpidyCat",
+  species: "Chibi Kitten Superhero",
+  primary: "#8fd5c5", // Mint-Teal fur
+  secondary: "#f5f0e5", // Cream belly
+  accent: "#f97316", // Bright Orange spider legs
+  skinOrFur: "#8fd5c5", // Mint-Teal
+  eyeColor: "#f59e0b", // Warm Amber eyes
+  outfit: "#1e1e24", // Black spiderweb bandana
+}
+
 const REXY_PALETTE: CharacterPalette = {
   name: "Rexy",
   species: "Baby T-Rex Mascot",
-  primary: "#10b981", // Emerald Green
-  secondary: "#86efac", // Light Green belly
-  accent: "#06b6d4", // Electric Blue thruster lights
-  skinOrFur: "#10b981", // Emerald Green
-  eyeColor: "#1e293b",
-  outfit: "#ef4444", // Bright Red high-top sneakers
+  primary: "#149058", // Emerald Green (Main)
+  secondary: "#a7d477", // Light Green (Belly)
+  accent: "#0086d6", // Electric Blue (Thrusters & Aviator Goggles)
+  skinOrFur: "#149058", // Emerald Green
+  eyeColor: "#1e293b", // Deep Charcoal
+  outfit: "#bc1c1e", // Bright Red (High-Top Sneakers)
 }
 
 const GLOW_PALETTE: CharacterPalette = {
   name: "Glow",
   species: "Firefly Robot Companion",
-  primary: "#0284c7",
-  secondary: "#e0f2fe",
-  accent: "#f59e0b",
-  skinOrFur: "#93c5fd",
-  eyeColor: "#06b6d4",
-  outfit: "#38bdf8",
+  primary: "#a6c7f2", // Soft Sky-Blue Metallic Orb
+  secondary: "#1e293b", // Dark Slate LED Visor Screen
+  accent: "#fed46e", // Warm Glowing Amber Antenna Bulb
+  skinOrFur: "#a6c7f2", // Soft Sky-Blue Metallic
+  eyeColor: "#3af7f0", // Glowing Neon Cyan LED Eyes
+  outfit: "#3af7f0", // Neon Cyan Accents
 }
 
 const BEAR_PALETTE: CharacterPalette = {
   name: "Barnaby Bear",
   species: "Musical Explorer Bear",
-  primary: "#10b981",
-  secondary: "#fbbf24",
-  accent: "#f59e0b",
-  skinOrFur: "#d97706",
-  eyeColor: "#451a03",
-  outfit: "#059669",
+  primary: "#d97706", // Honey Gold Fur
+  secondary: "#15803d", // Forest Green Overalls
+  accent: "#f59e0b", // Yellow Brass Buttons
+  skinOrFur: "#d97706", // Honey Gold
+  eyeColor: "#451a03", // Dark Chocolate
+  outfit: "#15803d", // Forest Green Overalls
 }
 
 export function build360TurnaroundPrompt(char: {
@@ -83,6 +94,32 @@ Overall: clean infographic-style layout, dark UI panels with white sans-serif la
 
 export const CANONICAL_CHARACTERS: Character[] = [
   {
+    id: "spidycat",
+    name: "SpidyCat",
+    role: "hero",
+    species: "Chibi Kitten Superhero",
+    tagline: "Never Give Up! Spider-powered kitten who helps kids solve big problems!",
+    description: "Mint-teal chibi kitten with soft cream belly, sparkling amber eyes, signature black spiderweb bandana, and 8 playful orange mechanical spider legs.",
+    frozenPrompt: "SpidyCat, chibi kitten superhero: mint-teal fur #8FD5C5, cream belly #F5F0E5, oversized sparkling amber eyes #F59E0B, black spiderweb bandana around neck, 8 tiny friendly orange mechanical spider legs on back #F97316, curling tabby tail. 3D Pixar Disney stylized animation, warm volumetric studio lighting, storybook proportions, clean background, no text, no watermark",
+    turnaroundPrompt: `A professional 3D character model sheet / turnaround reference sheet for a cute Pixar-Disney style kitten superhero named "SpidyCat," rendered in the style of a game/animation asset bible.
+
+TOP SECTION - 360° TURNAROUND:
+Show the same character in 7 poses in a horizontal row: FRONT, FRONT-LEFT 45°, LEFT SIDE, BACK-LEFT 45°, BACK, BACK-RIGHT 45°, FRONT-RIGHT 45°.
+
+CHARACTER DESIGN:
+SpidyCat, chibi kitten superhero: mint-teal fur #8FD5C5, cream belly #F5F0E5, amber eyes #F59E0B, black spiderweb bandana, 8 orange spider legs #F97316, curling tabby tail, Pixar-style 3D render, soft studio lighting, white background.
+
+BOTTOM SECTION - THREE PANELS:
+Left panel "DETAILS": paws, spiderweb bandana, orange spider legs, tail tip.
+Center panel "EXPRESSIONS": six close-up headshots: Happy, Determined, Curious, Surprised, Thinking, Sleepy.
+Right panel "COLOR PALETTE": Mint-Teal #8FD5C5, Cream #F5F0E5, Amber #F59E0B, Orange #F97316, Black #1E1E24.`,
+    palette: SPIDYCAT_PALETTE,
+    portraitUrl: "/sheets/spidycat.png",
+    turnaroundSheetUrl: "/sheets/spidycat-sheet.png",
+    createdAt: 1725580800000,
+    isDefault: true,
+  },
+  {
     id: "rexy",
     name: "Rexy",
     role: "hero",
@@ -104,33 +141,9 @@ Center panel "EXPRESSIONS": six close-up headshots in a 2x3 grid showing Happy, 
 Right panel "COLOR PALETTE": a vertical list of color swatches with circles and labels — Emerald Green (main), Light Green (belly), Dark Green (spots/stripes), Chrome Silver (jetpack/goggles), Electric Blue (lights/goggles), Bright Red (sneakers), White (shoe details), Charcoal (harness/straps). Below that a "MODEL INFO" text block listing Style: 3D Pixar/Disney, Character: Rexy (T-Rex), Role: Hero Mascot, Turnaround: 360°.
 
 Overall: clean infographic/asset-sheet layout, dark UI panels with white sans-serif labels, consistent lighting and proportions across all views, high production value like an official character design bible for an animated film or game.`,
+    palette: REXY_PALETTE,
     portraitUrl: "/sheets/rexy-hero.png",
     turnaroundSheetUrl: "/sheets/rexy-sheet.png",
-    palette: REXY_PALETTE,
-    createdAt: 1725580800000,
-    isDefault: true,
-  },
-  {
-    id: "barnaby-bear",
-    name: "Barnaby Bear",
-    role: "hero",
-    species: "Musical Explorer Bear",
-    tagline: "Gentle rhythm master who loves counting songs and nature!",
-    description: "Honey-gold chibi bear cub with warm caramel muzzle, green exploration overalls, and dark cocoa nose.",
-    frozenPrompt: "Barnaby Bear, a warm honey-gold chibi bear cub in forest-green exploration overalls with yellow buttons, soft cream muzzle and inner ears, dark chocolate eyes, holding a tiny wooden acoustic ukulele, gentle friendly smile. 3D Pixar Disney stylized animation, warm volumetric lighting, storybook proportions, no text",
-    turnaroundPrompt: `A professional 3D character model sheet / turnaround reference sheet for a cute Pixar-Disney style bear mascot named "Barnaby Bear," rendered in the style of a game/animation asset bible.
-
-TOP SECTION - 360° TURNAROUND:
-Show the same character in 7 poses in a horizontal row on a seamless studio background with soft warm lighting: FRONT, FRONT-LEFT 45°, LEFT SIDE, BACK-LEFT 45°, BACK, BACK-RIGHT 45°, FRONT-RIGHT 45°. Each pose labeled underneath in small caps white text. "360° TURNAROUND" icon label in top-left corner.
-
-CHARACTER DESIGN:
-Barnaby Bear, warm honey-gold chibi bear cub in forest-green exploration overalls with yellow buttons, soft cream muzzle and inner ears, dark chocolate eyes, holding tiny wooden acoustic ukulele.
-
-BOTTOM SECTION - THREE PANELS on a dark charcoal background:
-Left panel "DETAILS": four close-up inset photos of ukulele, overalls button, paw, and muzzle.
-Center panel "EXPRESSIONS": six close-up headshots showing Happy, Excited, Curious, Surprised, Determined, and Sleepy expressions.
-Right panel "COLOR PALETTE": swatches with Honey Gold, Forest Green, Cream, Dark Cocoa, Yellow Brass. Below that "MODEL INFO".`,
-    palette: BEAR_PALETTE,
     createdAt: 1725580800000,
   },
   {
@@ -152,16 +165,41 @@ Glow, smooth rounded sky-blue metallic robotic orb with cyan glowing LED visor f
 BOTTOM SECTION - THREE PANELS:
 Left panel "DETAILS": antenna bulb, wing joint, visor screen, thruster base.
 Center panel "EXPRESSIONS": six facial expressions on cyan LED screen.
-Right panel "COLOR PALETTE": Sky Blue, Cyan, Warm Amber, Slate Shadow.`,
+Right panel "COLOR PALETTE": Sky Blue #A6C7F2, Slate Visor #1E293B, Neon Cyan #3AF7F0, Glowing Amber #FED46E.`,
     palette: GLOW_PALETTE,
     portraitUrl: "/sheets/glow.png",
     turnaroundSheetUrl: "/sheets/glow-sheet.png",
     createdAt: 1725580800000,
   },
+  {
+    id: "barnaby-bear",
+    name: "Barnaby Bear",
+    role: "friend",
+    species: "Musical Explorer Bear",
+    tagline: "Gentle rhythm master who loves counting songs and nature!",
+    description: "Honey-gold chibi bear cub with warm caramel muzzle, green exploration overalls, and dark cocoa nose.",
+    frozenPrompt: "Barnaby Bear, a warm honey-gold chibi bear cub in forest-green exploration overalls with yellow buttons, soft cream muzzle and inner ears, dark chocolate eyes, holding a tiny wooden acoustic ukulele, gentle friendly smile. 3D Pixar Disney stylized animation, warm volumetric lighting, storybook proportions, no text",
+    turnaroundPrompt: `A professional 3D character model sheet / turnaround reference sheet for a cute Pixar-Disney style bear mascot named "Barnaby Bear," rendered in the style of a game/animation asset bible.
+
+TOP SECTION - 360° TURNAROUND:
+Show the same character in 7 poses in a horizontal row on a seamless studio background with soft warm lighting: FRONT, FRONT-LEFT 45°, LEFT SIDE, BACK-LEFT 45°, BACK, BACK-RIGHT 45°, FRONT-RIGHT 45°. Each pose labeled underneath in small caps white text. "360° TURNAROUND" icon label in top-left corner.
+
+CHARACTER DESIGN:
+Barnaby Bear, warm honey-gold chibi bear cub in forest-green exploration overalls with yellow buttons, soft cream muzzle and inner ears, dark chocolate eyes, holding tiny wooden acoustic ukulele.
+
+BOTTOM SECTION - THREE PANELS on a dark charcoal background:
+Left panel "DETAILS": four close-up inset photos of ukulele, overalls button, paw, and muzzle.
+Center panel "EXPRESSIONS": six close-up headshots showing Happy, Excited, Curious, Surprised, Determined, and Sleepy expressions.
+Right panel "COLOR PALETTE": swatches with Honey Gold, Forest Green, Cream, Dark Cocoa, Yellow Brass. Below that "MODEL INFO".`,
+    palette: BEAR_PALETTE,
+    createdAt: 1725580800000,
+  },
 ]
 
-const VAULT_KEY = "yt-kids-character-vault-v7"
-const SELECTED_KEY = "yt-kids-selected-character-v7"
+const VAULT_KEY = "yt-kids-character-vault-v8"
+const SELECTED_KEY = "yt-kids-selected-character-v8"
+const PREV_VAULT_KEY = "yt-kids-character-vault-v7"
+const PREV_SELECTED_KEY = "yt-kids-selected-character-v7"
 
 export function loadCharacterVault(): Character[] {
   try {
@@ -176,6 +214,47 @@ export function loadCharacterVault(): Character[] {
           turnaroundSheetUrl: c.turnaroundSheetUrl?.startsWith("data:image/svg") ? undefined : c.turnaroundSheetUrl,
           turnaroundPrompt: c.turnaroundPrompt || build360TurnaroundPrompt(c),
         }))
+      }
+    }
+
+    // Auto-migrate from previous vault version: preserve custom characters while
+    // updating canonical ones with new portraits and exact reference palettes.
+    const prevRaw = localStorage.getItem(PREV_VAULT_KEY)
+    if (prevRaw !== null) {
+      const prev = JSON.parse(prevRaw) as Character[]
+      if (Array.isArray(prev)) {
+        const canonicalMap = new Map(CANONICAL_CHARACTERS.map((c) => [c.id, c]))
+        const merged: Character[] = []
+
+        // First add canonical characters
+        for (const canon of CANONICAL_CHARACTERS) {
+          const existing = prev.find((p) => p.id === canon.id)
+          if (existing) {
+            merged.push({
+              ...existing,
+              palette: canon.palette,
+              portraitUrl: existing.portraitUrl || canon.portraitUrl,
+              turnaroundSheetUrl: existing.turnaroundSheetUrl || canon.turnaroundSheetUrl,
+              frozenPrompt: canon.frozenPrompt,
+              turnaroundPrompt: canon.turnaroundPrompt,
+              description: canon.description,
+            })
+          } else {
+            merged.push(canon)
+          }
+        }
+
+        // Preserve any custom user-created characters (like Rusty)
+        for (const custom of prev) {
+          if (!canonicalMap.has(custom.id)) {
+            merged.push(custom)
+          }
+        }
+
+        saveCharacterVault(merged)
+        const prevSelected = localStorage.getItem(PREV_SELECTED_KEY)
+        if (prevSelected) setSelectedCharacterId(prevSelected)
+        return merged
       }
     }
   } catch (err) {

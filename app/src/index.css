@@ -90,6 +90,61 @@
   }
 }
 
+/* ============================================================
+   9router palette — verbatim from 9router src/app/globals.css.
+   Brand orange #E56A4A, warm neutral surfaces, text/border tokens.
+   Light + dark both defined; components use bg-9r-* utilities.
+   ============================================================ */
+:root {
+  --9r-bg: #FDFAF6;
+  --9r-surface: #ffffff;
+  --9r-surface-2: #f4f4f5;
+  --9r-surface-3: #e7e7e9;
+  --9r-border: #e5e7eb;
+  --9r-border-subtle: #f1f1f3;
+  --9r-text: #0a0a0a;
+  --9r-muted: #6B7280;
+}
+.dark {
+  --9r-bg: #1a1a1a;
+  --9r-surface: #262626;
+  --9r-surface-2: #303030;
+  --9r-surface-3: #3a3a3a;
+  --9r-border: #333333;
+  --9r-text: #ededed;
+  --9r-muted: #9ca3af;
+  --9r-border-subtle: #2a2a2a;
+}
+@theme inline {
+  --color-9r-bg: var(--9r-bg);
+  --color-9r-surface: var(--9r-surface);
+  --color-9r-surface-2: var(--9r-surface-2);
+  --color-9r-surface-3: var(--9r-surface-3);
+  --color-9r-border: var(--9r-border);
+  --color-9r-text: var(--9r-text);
+  --color-9r-muted: var(--9r-muted);
+  --color-9r-brand: #E56A4A;
+  --color-9r-brand-600: #cc5236;
+  --color-9r-brand-300: #ee8d6a;
+}
+
+/* Material Symbols ligature font — same icon system as 9router */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
 @layer utilities {
   .glass-panel {
     border: 1px solid hsl(0 0% 100% / 0.38);

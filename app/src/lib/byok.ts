@@ -1,5 +1,6 @@
 // BYOK API layer — talks only to user-configured endpoints. Keys never logged.
 import type { AgentConfig, Capability } from "./agents"
+import { loadAccounts, accountToConfig, pickAccount, markAccountUsed, markAccountQuotaLocked, markAccountError, nextUnlockMs, setLastUsedLabel } from "./accounts"
 
 // Normalize base URL: trim slashes, de-duplicate /v1 (user may paste
 // https://host/v1 or https://host — we always append /v1/... paths).
@@ -288,7 +289,69 @@ async function sleep(ms: number): Promise<void> {
 // runs out lands on an account with image capacity.
 export async function runImage(c: AgentConfig, prompt: string): Promise<string> {
   const path = c.imagePath?.trim() || "/v1/images/generations"
-  return runImageRetry(c, targetFor(c, path), prompt, "1792x1024", "Image generation")
+  return runImageWithAccountPool(c, targetFor(c, path), prompt, "1792x1024", "Image generation")
+}
+
+// ---------------------------------------------------------------------------
+// 9router-style account pool rotation: accounts are tried in priority order
+// (then least-recently-used). On an image quota lock, the account is parked
+// until reset (modelLock_* equivalent) and the next account takes over.
+// Falls back to the agent's own single config when the pool is empty.
+// ---------------------------------------------------------------------------
+async function runImageWithAccountPool(
+  c: AgentConfig,
+  target: string,
+  prompt: string,
+  size: string,
+  what: string
+): Promise<string> {
+  const accounts = loadAccounts()
+  if (accounts.length === 0) return runImageRetry(c, target, prompt, size, what)
+
+  const errors: string[] = []
+  let cursor: AgentConfig | null = null
+  let lastErr: unknown = null
+  // Try each account once; QuotaResetError from one account just parks it.
+  for (let i = 0; i < accounts.length + 1; i++) {
+    const acc = pickAccount()
+    if (!acc) break
+    if (cursor && JSON.stringify([cursor.baseUrl, cursor.apiKey]) === JSON.stringify([acc.baseUrl, acc.apiKey])) {
+      // pickAccount keeps returning the same head — clear its lock so we can move on
+      markAccountQuotaLocked(acc.id, 60_000, "skipped this round")
+      continue
+    }
+    cursor = accountToConfig(acc, c)
+    setLastUsedLabel(`${acc.label} · ${acc.imageModel || c.model || "image"}`)
+    try {
+      const result = await runImageRetry(cursor, targetFor(cursor, new URL(target).pathname), prompt, size, what)
+      markAccountUsed(acc.id)
+      return result
+    } catch (e) {
+      lastErr = e
+      const msg = (e as Error).message
+      errors.push(`${acc.label}: ${msg.slice(0, 90)}`)
+      if (/quota|429|resource.?exhaust|limit: 0/i.test(msg)) {
+        // reuse byok's own reset parser via a probe: quotaResetError is module-local,
+        // so parse the same way: look for "Quota resets in ~X min" in the message.
+        const resetMatch = /Quota resets in ~(\d+) min/.exec(msg)
+        const resetMs = resetMatch ? parseInt(resetMatch[1]) * 60_000 : 10 * 60_000
+        markAccountQuotaLocked(acc.id, resetMs, msg)
+      } else if (/HTML instead of JSON|404|401|403/.test(msg)) {
+        markAccountError(acc.id, msg)
+      } else {
+        markAccountQuotaLocked(acc.id, 60_000, msg)
+      }
+    }
+  }
+  // pool drained — surface the earliest unlock or the raw failure
+  const unlock = nextUnlockMs()
+  if (unlock) {
+    const mins = Math.ceil((unlock - Date.now()) / 60000)
+    throw new Error(
+      `${what} failed — all pool accounts quota-locked. Nearest unlock in ~${mins} min. Add more accounts in Accounts, or wait. Last errors: ${errors.slice(-3).join(" | ")}`
+    )
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`${what} failed — pool empty. Last: ${errors.slice(-2).join(" | ")}`)
 }
 
 class QuotaResetError extends Error {}
@@ -402,7 +465,7 @@ export async function runKeyframeImage(
   const target = targetFor(c, path)
   const size = aspectRatio === "16:9" ? "1792x1024" : "1024x1792"
   const fullPrompt = `${prompt.slice(0, 900)}, 3D digital animation render, volumetric soft lighting, vibrant preschool palette, cinematic depth of field, no text`
-  return runImageRetry(c, target, fullPrompt, size, "Keyframe generation")
+  return runImageWithAccountPool(c, target, fullPrompt, size, "Keyframe generation")
 }
 
 // text-to-speech — High-speed parallel edge-tts speech synthesis stems

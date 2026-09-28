@@ -14,6 +14,10 @@ import { YouTubePanel } from "@/components/YouTubePanel"
 import { AGENTS } from "@/lib/agents"
 import { useStudio } from "@/lib/pipeline"
 import { loadCharacterVault, getSelectedCharacter, setSelectedCharacterId, type Character } from "@/lib/characterVault"
+import { ChatPage } from "@/components/pages/ChatPage"
+import { AccountsPage } from "@/components/pages/AccountsPage"
+import { QuotaPage } from "@/components/pages/QuotaPage"
+import { SidebarRail } from "@/components/SidebarRail"
 import ConstellationGrid from "@/components/ui/constellation-grid"
 import { cn } from "@/lib/utils"
 
@@ -27,8 +31,11 @@ const pageTransition = {
 export default function App() {
   const studio = useStudio()
   const [showConfigs, setShowConfigs] = useState(true)
-  const [activeTab, setActiveTab] = useState<"song" | "character" | "youtube">(() => {
+  const [activeTab, setActiveTab] = useState<"song" | "character" | "youtube" | "chat" | "accounts" | "quota">(() => {
     if (typeof window !== "undefined" && window.location.hash === "#characters") return "character"
+    if (typeof window !== "undefined" && window.location.hash === "#accounts") return "accounts"
+    if (typeof window !== "undefined" && window.location.hash === "#quota") return "quota"
+    if (typeof window !== "undefined" && window.location.hash === "#chat") return "chat"
     return "song"
   })
   const [characters, setCharacters] = useState<Character[]>(() => loadCharacterVault())
@@ -117,12 +124,53 @@ export default function App() {
               onGetAutoVideo={() => studio.getAutoVideo(active.id)}
             />
           </motion.div>
+        ) : activeTab === "chat" ? (
+          // ---- Chat copilot page (text-first, 9router-style) ----
+          <main key="chat" className="z-10 h-screen w-full md:pl-16">
+            <SidebarRail
+              active="chat"
+              onSelect={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = `#${id}` }}
+              onStudioTab={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = id === "character" ? "#characters" : "" }}
+            />
+            <ChatPage />
+          </main>
+        ) : activeTab === "accounts" ? (
+          // ---- 9router-style model access manager ----
+          <main key="accounts" className="z-10 w-full md:pl-16">
+            <SidebarRail
+              active="accounts"
+              onSelect={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = `#${id}` }}
+              onStudioTab={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = id === "character" ? "#characters" : "" }}
+            />
+            <AccountsPage />
+          </main>
+        ) : activeTab === "quota" ? (
+          // ---- 9router-style quota tracker (separate tab; model access untouched) ----
+          <main key="quota" className="z-10 w-full md:pl-16">
+            <SidebarRail
+              active="quota"
+              onSelect={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = `#${id}` }}
+              onStudioTab={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = id === "character" ? "#characters" : "" }}
+            />
+            <QuotaPage />
+          </main>
         ) : (
           // ---- Landing page ----
           <main
             key="landing"
-            className="z-10 flex w-full max-w-5xl flex-col items-center gap-6 p-6 mx-auto"
+            className="z-10 flex w-full max-w-5xl flex-col items-center gap-6 p-6 mx-auto md:pl-16"
           >
+            <SidebarRail
+              active={activeTab}
+              onSelect={(id) => {
+                setActiveTab(id)
+                if (typeof window !== "undefined") window.location.hash = `#${id}`
+              }}
+              onStudioTab={(id) => {
+                setActiveTab(id)
+                if (typeof window !== "undefined") window.location.hash = id === "character" ? "#characters" : ""
+              }}
+            />
             {/* Top Bar with Mode Switcher & Theme Toggle */}
             <div className="w-full flex items-center justify-between pb-1">
               {/* Studio Hub Selector */}

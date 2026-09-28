@@ -3,7 +3,7 @@ import http from "node:http"
 import https from "node:https"
 import os from "node:os"
 import fs from "node:fs/promises"
-import { createReadStream } from "node:fs"
+import { createReadStream, existsSync, readFileSync } from "node:fs"
 import { spawn } from "node:child_process"
 import react from "@vitejs/plugin-react"
 import { defineConfig, type Connect, type Plugin } from "vite"
@@ -241,9 +241,114 @@ function corsProxy(): Plugin {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 9router OAuth account import + live quota: reads the local 9router sqlite
+// (READ-ONLY) and serves its providerConnections as import rows — provider,
+// email, authType, active, and any still-active modelLock_* as lockUntil. API
+// keys and OAuth tokens NEVER leave the file: imported accounts call the
+// gateway, which holds the credentials. Login state lives in 9router; we
+// mirror it. /api/9router-quota additionally calls the 9router usage API
+// (x-9r-cli-token = sha256(machine-id + "9r-cli-auth" + cli-secret)[:16],
+// same auth the 9router CLI uses) to serve its live quota tracker rows.
+// ---------------------------------------------------------------------------
+function nineRouterImportPlugin(): Plugin {
+  type Row = {
+    provider: string
+    email?: string
+    authType?: string
+    isActive?: boolean
+    lockUntil?: string | null
+    quota?: Array<{ label: string; used: number; limit: number; resetAt?: string }>
+  }
+  function readRows(): Row[] {
+    const dbPath = path.join(os.homedir(), ".9router/db/data.sqlite")
+    if (!existsSync(dbPath)) return []
+    const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (p: string, o?: { readOnly?: boolean }) => { prepare(sql: string): { all(): unknown[] }; close(): void } }
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    try {
+      const rows = db.prepare("SELECT provider, email, authType, isActive, data FROM providerConnections WHERE isActive=1").all() as Array<{
+        provider: string; email: string | null; authType: string | null; isActive: number | string | null; data: string | null
+      }>
+      return rows.map((r) => {
+        let lockUntil: string | null = null
+        let quota: Row["quota"]
+        try {
+          const data = JSON.parse(r.data || "{}") as Record<string, unknown>
+          for (const [k, v] of Object.entries(data)) {
+            if (!k.startsWith("modelLock_")) continue
+            const s = typeof v === "string" ? Date.parse(v) : NaN
+            if (Number.isFinite(s) && s > Date.now() && (!lockUntil || s < Date.parse(lockUntil))) lockUntil = String(v)
+          }
+          // optional usage windows if 9router stores them (e.g. usageHistory-derived)
+          const q = data.quota
+          if (Array.isArray(q)) quota = q as Row["quota"]
+        } catch { /* malformed data cell — import without state */ }
+        return {
+          provider: r.provider,
+          email: r.email || undefined,
+          authType: r.authType || undefined,
+          isActive: !!r.isActive,
+          lockUntil,
+          quota,
+        }
+      })
+    } finally {
+      db.close()
+    }
+  }
+  const handler: Connect.NextHandleFunction = async (req, res, next) => {
+    const route = req.url?.split("?")[0]
+    if (route !== "/api/9router-accounts" && route !== "/api/9router-quota") return next()
+    try {
+      if (route === "/api/9router-quota") {
+        // Live quota tracker: derive the 9router CLI token (same sha256 of
+        // machine-id + salt + cli-secret the CLI sends) and pull per-connection
+        // usage. Secrets stay in ~/.9router — the app never sees them.
+        const { createHash } = require("node:crypto") as typeof import("node:crypto")
+        const read = (p: string) => readFileSync(p, "utf8").trim()
+        const token = createHash("sha256")
+          .update(read(path.join(os.homedir(), ".9router/machine-id")) + "9r-cli-auth" + read(path.join(os.homedir(), ".9router/auth/cli-secret")))
+          .digest("hex")
+          .slice(0, 16)
+        const headers = { "x-9r-cli-token": token }
+        const base = "http://127.0.0.1:20128"
+        const getJson = (u: string) => fetch(u, { headers }).then((r) => r.json())
+        const connsRes = (await getJson(`${base}/api/providers`)) as {
+          data?: { connections?: Array<{ id: string; provider?: string; email?: string; name?: string }> }
+          connections?: Array<{ id: string; provider?: string; email?: string; name?: string }>
+        }
+        const conns = connsRes.data?.connections ?? connsRes.connections ?? []
+        const rows: Array<{ id: string; provider?: string; email?: string; name?: string; plan?: string; quotas: Record<string, unknown> }> = []
+        for (const c of conns) {
+          const u = (await getJson(`${base}/api/usage/${c.id}`)) as { plan?: string; quotas?: Record<string, unknown> }
+          rows.push({ id: c.id, provider: c.provider, email: c.email, name: c.name, plan: u.plan, quotas: u.quotas ?? {} })
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+        res.end(JSON.stringify({ rows }))
+        return
+      }
+      const rows = readRows()
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+      res.end(JSON.stringify({ rows }))
+    } catch (e) {
+      res.writeHead(502, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ error: `9router quota/import failed: ${(e as Error).message}` }))
+    }
+  }
+  return {
+    name: "9router-account-import",
+    configureServer(server) {
+      server.middlewares.use(handler)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handler)
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss(), corsProxy(), ttsPlugin(), renderPlugin()],
+  plugins: [react(), tailwindcss(), corsProxy(), ttsPlugin(), renderPlugin(), nineRouterImportPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),

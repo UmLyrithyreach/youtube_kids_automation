@@ -123,12 +123,35 @@ export function NodeCanvas({
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y })
   }
 
+  const startNodeDrag = (e: React.MouseEvent, id: NodeId) => {
+    if ((e.target as HTMLElement).closest("button, a, input, textarea")) return
+    e.stopPropagation()
+    const pos = positions[id]
+    // canvas-space = (client - pan) / scale (origin-top-left)
+    nodeDrag.current = { id, dx: (e.clientX - pan.x) / scale - pos.x, dy: (e.clientY - pan.y) / scale - pos.y }
+  }
+
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (nodeDrag.current) {
+      const { id, dx, dy } = nodeDrag.current
+      setPositions((p) => ({
+        ...p,
+        [id]: {
+          ...p[id],
+          x: Math.max(0, (e.clientX - pan.x) / scale - dx),
+          y: Math.max(0, (e.clientY - pan.y) / scale - dy),
+        },
+      }))
+      return
+    }
     if (!isDragging) return
     setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y })
   }
 
-  const handleMouseUp = () => setIsDragging(false)
+  const handleMouseUp = () => {
+    nodeDrag.current = null
+    setIsDragging(false)
+  }
 
   const zoomIn = () => setScale((s) => Math.min(1.4, s + 0.1))
   const zoomOut = () => setScale((s) => Math.max(0.55, s - 0.1))
@@ -160,15 +183,21 @@ ${s.script || s.prompt}`
     URL.revokeObjectURL(url)
   }
 
-  // Node Positions in canvas space
-  const n1 = { x: 50, y: 160, w: 260, h: 220 }   // Input Prompt & Mascot DNA
-  const n2 = { x: 360, y: 35, w: 320, h: 210 }   // Vision & Mascot Bible
-  const n3 = { x: 360, y: 275, w: 320, h: 270 }  // script.md Screenplay
-  const n4 = { x: 740, y: 35, w: 410, h: 325 }   // 360 Model Generator
-  const n5 = { x: 740, y: 385, w: 410, h: 200 }  // Interactive 360 Angle Inspector
-  const n6 = { x: 1210, y: 100, w: 350, h: 480 } // Master Deliverable Pack
-  const n7 = { x: 360, y: 610, w: 1200, h: 340 } // Storyboard Keyframe Reel & Audio Stems
-  const n8 = { x: 1210, y: 630, w: 350, h: 290 } // Video Render (Full Automation, Subagent F)
+  // Node Positions in canvas space — draggable, ComfyUI/TobyFlow-style
+  // ponytail: positions not persisted; add localStorage when layouts matter across sessions
+  const [positions, setPositions] = useState({
+    n1: { x: 50, y: 160, w: 260, h: 220 },   // Input Prompt & Mascot DNA
+    n2: { x: 360, y: 35, w: 320, h: 210 },   // Vision & Mascot Bible
+    n3: { x: 360, y: 275, w: 320, h: 270 },  // script.md Screenplay
+    n4: { x: 740, y: 35, w: 410, h: 325 },   // 360 Model Generator
+    n5: { x: 740, y: 385, w: 410, h: 200 },  // Interactive 360 Angle Inspector
+    n6: { x: 1210, y: 100, w: 350, h: 480 }, // Master Deliverable Pack
+    n7: { x: 360, y: 610, w: 1200, h: 340 }, // Storyboard Keyframe Reel & Audio Stems
+    n8: { x: 1210, y: 630, w: 350, h: 290 }, // Video Render (Full Automation, Subagent F)
+  })
+  type NodeId = keyof typeof positions
+  const nodeDrag = useRef<{ id: NodeId; dx: number; dy: number } | null>(null)
+  const { n1, n2, n3, n4, n5, n6, n7, n8 } = positions
 
   // Wire bezier calculations
   const wire = (fromX: number, fromY: number, toX: number, toY: number) => {
@@ -429,6 +458,7 @@ ${s.script || s.prompt}`
           data-canvas-interactive
           className="absolute rounded-2xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur-md pointer-events-auto transition-all hover:shadow-2xl"
           style={{ left: n1.x, top: n1.y, width: n1.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n1")}
         >
           <div className="flex items-center justify-between pb-2 border-b border-border/60">
             <div className="flex items-center gap-1.5 text-xs font-semibold">
@@ -458,6 +488,7 @@ ${s.script || s.prompt}`
             visionActive ? "border-purple-400 ring-2 ring-purple-400/20" : "border-border"
           )}
           style={{ left: n2.x, top: n2.y, width: n2.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n2")}
         >
           {/* Input Port */}
           <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-purple-500 shadow-sm" />
@@ -501,6 +532,7 @@ ${s.script || s.prompt}`
             scriptActive ? "border-blue-500 ring-2 ring-blue-500/20 shadow-blue-500/10" : "border-border"
           )}
           style={{ left: n3.x, top: n3.y, width: n3.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n3")}
         >
           {/* Input Port */}
           <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-blue-500 shadow-sm" />
@@ -572,6 +604,7 @@ ${s.script || s.prompt}`
             imageActive ? "border-emerald-400 ring-2 ring-emerald-400/20 shadow-emerald-500/10" : "border-border"
           )}
           style={{ left: n4.x, top: n4.y, width: n4.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n4")}
         >
           {/* Input Port */}
           <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-emerald-500 shadow-sm" />
@@ -627,6 +660,7 @@ ${s.script || s.prompt}`
           data-canvas-interactive
           className="absolute rounded-2xl border border-border bg-card/95 p-4 shadow-xl backdrop-blur-md pointer-events-auto transition-all hover:shadow-2xl"
           style={{ left: n5.x, top: n5.y, width: n5.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n5")}
         >
           {/* Input Port */}
           <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-sky-500 shadow-sm" />
@@ -684,6 +718,7 @@ ${s.script || s.prompt}`
             allDone ? "border-emerald-500/80 ring-2 ring-emerald-500/20" : "border-border"
           )}
           style={{ left: n6.x, top: n6.y, width: n6.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n6")}
         >
           {/* Input Port */}
           <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-emerald-500 shadow-sm" />
@@ -764,6 +799,7 @@ ${s.script || s.prompt}`
           data-canvas-interactive
           className="absolute rounded-2xl border border-border/80 bg-card/95 p-4 shadow-xl backdrop-blur-md pointer-events-auto transition-all hover:shadow-2xl"
           style={{ left: n7.x, top: n7.y, width: n7.w }}
+          onMouseDown={(e) => startNodeDrag(e, "n7")}
         >
           <div className="flex items-center justify-between pb-2 border-b border-border/60">
             <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
@@ -817,6 +853,7 @@ ${s.script || s.prompt}`
                 : "border-border"
             )}
             style={{ left: n8.x, top: n8.y, width: n8.w }}
+            onMouseDown={(e) => startNodeDrag(e, "n8")}
           >
             {/* Input Port */}
             <div className="absolute -left-2 top-1/2 -translate-y-1/2 size-4 rounded-full border-2 border-card bg-orange-500 shadow-sm" />

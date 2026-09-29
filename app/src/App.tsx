@@ -17,6 +17,7 @@ import { loadCharacterVault, getSelectedCharacter, setSelectedCharacterId, type 
 import { ChatPage } from "@/components/pages/ChatPage"
 import { AccountsPage } from "@/components/pages/AccountsPage"
 import { QuotaPage } from "@/components/pages/QuotaPage"
+import StudioTab from "@/studio/StudioTab"
 import { SidebarRail } from "@/components/SidebarRail"
 import ConstellationGrid from "@/components/ui/constellation-grid"
 import { cn } from "@/lib/utils"
@@ -31,7 +32,8 @@ const pageTransition = {
 export default function App() {
   const studio = useStudio()
   const [showConfigs, setShowConfigs] = useState(true)
-  const [activeTab, setActiveTab] = useState<"song" | "character" | "youtube" | "chat" | "accounts" | "quota">(() => {
+  const [activeTab, setActiveTab] = useState<"studio" | "song" | "character" | "youtube" | "chat" | "accounts" | "quota">(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#studio") return "studio"
     if (typeof window !== "undefined" && window.location.hash === "#characters") return "character"
     if (typeof window !== "undefined" && window.location.hash === "#accounts") return "accounts"
     if (typeof window !== "undefined" && window.location.hash === "#quota") return "quota"
@@ -124,6 +126,16 @@ export default function App() {
               onGetAutoVideo={() => studio.getAutoVideo(active.id)}
             />
           </motion.div>
+        ) : activeTab === "studio" ? (
+          // ---- Node-graph studio (ComfyUI-pattern canvas over local backend) ----
+          <main key="studio" className="z-10 h-screen w-full md:pl-16">
+            <SidebarRail
+              active="studio"
+              onSelect={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = `#${id}` }}
+              onStudioTab={(id) => { setActiveTab(id); if (typeof window !== "undefined") window.location.hash = id === "character" ? "#characters" : "" }}
+            />
+            <StudioTab />
+          </main>
         ) : activeTab === "chat" ? (
           // ---- Chat copilot page (text-first, 9router-style) ----
           <main key="chat" className="z-10 h-screen w-full md:pl-16">

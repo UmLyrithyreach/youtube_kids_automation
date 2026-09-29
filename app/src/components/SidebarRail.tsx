@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Music2, SquarePlay, Sparkles, MessageSquare, KeyRound, Gauge, ChevronsRight, ChevronsLeft } from "lucide-react"
+import { Music2, SquarePlay, Sparkles, MessageSquare, KeyRound, Gauge, Workflow, ChevronsRight, ChevronsLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // 9router-style left sidebar — persistent across all pages, expandable.
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 // Providers are the two new destinations; studio tabs keep their behavior.
 
 const items = [
+  { id: "studio", label: "Node Studio", icon: Workflow, accent: "text-orange-500" },
   { id: "song", label: "Song & Video", icon: Music2, accent: "text-indigo-500" },
   { id: "character", label: "Characters", icon: Sparkles, accent: "text-amber-500" },
   { id: "youtube", label: "Publish", icon: SquarePlay, accent: "text-red-500" },

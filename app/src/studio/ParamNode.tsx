@@ -1,7 +1,4 @@
-// Generic param node: header (dot + title) + textarea input + handles.
-// All four kinds share this. Textarea edits write straight through
-// useReactFlow so autosave sees them.
-// Skin: TobyFlow zinc card + indigo selected ring + rounded handles.
+// Generic param node: zinc card + lime selected ring — TobyFlow editor look.
 
 import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react"
 import { StatusDot } from "./StatusDot"
@@ -24,13 +21,13 @@ export function ParamNode({ id, data, selected }: NodeProps) {
       className="nodrag nopan"
       style={{
         width: 200,
-        background: "var(--bg-secondary)",
+        background: "var(--bg-surface)",
         border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
         borderRadius: 8,
         padding: 10,
         fontSize: 12,
         color: "var(--text-primary)",
-        boxShadow: selected ? "0 0 0 1px var(--accent)" : "none",
+        boxShadow: selected ? "0 0 0 1px var(--accent)" : "0 2px 8px rgba(0,0,0,0.4)",
       }}
     >
       <Handle type="target" position={Position.Left} style={{ background: "var(--accent)", border: "none" }} />
@@ -43,20 +40,7 @@ export function ParamNode({ id, data, selected }: NodeProps) {
           value={(d.prompt as string) ?? ""}
           placeholder={d.kind === "prompt" ? "Prompt text…" : "File path or URL…"}
           rows={3}
-          style={{
-            width: "100%",
-            resize: "vertical",
-            background: "var(--bg-primary)",
-            color: "var(--text-primary)",
-            border: "1px solid var(--border)",
-            borderRadius: 5,
-            padding: 6,
-            fontSize: 12,
-            fontFamily: "inherit",
-          }}
-          className="focus:outline-none"
-          onFocus={(e) => (e.target.style.borderColor = "var(--accent)")}
-          onBlur={(e) => (e.target.style.borderColor = "var(--border)")}
+          className="tfy-textarea"
           onChange={(e) => setPrompt(e.target.value)}
         />
       ) : (

@@ -1,18 +1,20 @@
 // StudioApp — the whole app IS the node canvas (ComfyUI-style).
-// TobyFlow v2 visual language: zinc surfaces, indigo accent, gradient CTA,
-// pill controls, version badge, toasts. Canvas stays ComfyUI.
-// Top bar: brand + workflow name + Generate. Left: node palette. Center: canvas.
-// Bottom: run log. Old hub tabs are bypassed entirely.
+// Skin = TobyFlow workflow editor (visual language only, no upstream code):
+// near-black canvas #0e0e0e, chrome #151515, lime #c6f24e accent, green run
+// circle, amber upgrade pill, white Create, blue edge line, left icon rail.
+// Top bar: title + lime autosave toggle. Right: stats + Upgrade + Create.
+// Left rail: add / select / history / docs / duplicate / RUN / undo / redo.
+// Bottom: zoom pill + Recent + blue progress edge line. Old hub bypassed.
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Background,
   BackgroundVariant,
-  Controls,
   ReactFlow,
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
 } from "@xyflow/react"
@@ -38,6 +40,35 @@ function makeNode(kind: NodeKind, x: number, y: number, prompt = ""): FlowNode {
 
 type Toast = { id: number; type: "success" | "error" | "info"; message: string }
 
+/* Inline stroke icons (16px, currentColor) — TobyFlow rail language. */
+const I = {
+  cursor: <path d="M4 2l8 11 1.5-4.5L18 7 4 2z" fill="currentColor" stroke="none" />,
+  clock: <><circle cx="9" cy="9" r="6.5" /><path d="M9 5.5V9l2.5 2" /></>,
+  doc: <><path d="M4 2.5h7l4 4V15.5H4z" /><path d="M11 2.5v4h4" /><path d="M6 9h6M6 11.5h6" /></>,
+  copy: <><rect x="2.5" y="2.5" width="9" height="9" rx="1.5" /><rect x="6.5" y="6.5" width="9" height="9" rx="1.5" /></>,
+  undo: <path d="M4 8h7a4 4 0 010 8H7M4 8l3-3M4 8l3 3" />,
+  redo: <path d="M15 8H8a4 4 0 000 8h4M15 8l-3-3M15 8l-3 3" />,
+  zoom: <><circle cx="8" cy="8" r="5" /><path d="M12 12l4 4" /></>,
+  fit: <path d="M2 6V2h4M12 2h4v4M16 12v4h-4M6 16H2v-4" />,
+  grid: <><rect x="2.5" y="2.5" width="5.5" height="5.5" rx="1" /><rect x="10" y="2.5" width="5.5" height="5.5" rx="1" /><rect x="2.5" y="10" width="5.5" height="5.5" rx="1" /><rect x="10" y="10" width="5.5" height="5.5" rx="1" /></>,
+  gear: <><circle cx="9" cy="9" r="2.5" /><path d="M9 2v2.2M9 13.8V16M2 9h2.2M13.8 9H16M4 4l1.6 1.6M12.4 12.4L14 14M14 4l-1.6 1.6M5.6 12.4L4 14" /></>,
+  play: <path d="M6.5 4.5L14 9l-7.5 4.5V4.5z" fill="currentColor" stroke="none" />,
+  plus: <path d="M9 4v10M4 9h10" />,
+  close: <path d="M4 4l10 10M14 4L4 14" />,
+  bolt: <path d="M10 2L4 10h4l-1 6 6-8h-4l1-6z" fill="currentColor" stroke="none" />,
+  node: <><circle cx="4" cy="9" r="2" /><circle cx="14" cy="4" r="2" /><circle cx="14" cy="14" r="2" /><path d="M6 8.2l6-3.4M6 9.8l6 3.4" /></>,
+  crown: <path d="M3 13l-1-8 4.5 3L9 3l2.5 5L16 5l-1 8H3z" />,
+  hist: <><circle cx="9" cy="9" r="6.5" /><path d="M9 5.5V9l2.5 2" /></>,
+}
+
+function Icon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 18 18" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round">
+      {children}
+    </svg>
+  )
+}
+
 export default function StudioApp() {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -46,10 +77,12 @@ export default function StudioApp() {
   const [net, setNet] = useState<"idle" | "saving" | "saved" | "offline">("idle")
   const [runLog, setRunLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [logOpen, setLogOpen] = useState(true)
-  const [paletteOpen, setPaletteOpen] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [progress, setProgress] = useState<number | null>(null)
+  const [logOpen, setLogOpen] = useState(false)
+  const [auto, setAuto] = useState(true)
+  const [tool, setTool] = useState<"cursor" | "history" | "docs" | "dup" | "zoom" | "grid" | "gear">("cursor")
+  const [jobsCount, setJobsCount] = useState(0)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idRef = useRef<string | null>(null)
   idRef.current = workflowId
@@ -58,6 +91,7 @@ export default function StudioApp() {
   const doneCount = useRef(0)
   const busyRef = useRef(false)
   busyRef.current = busy
+  const rf = useReactFlow()
 
   const toast = useCallback((type: Toast["type"], message: string) => {
     const id = Date.now() + Math.random()
@@ -73,11 +107,11 @@ export default function StudioApp() {
 
   const addNode = useCallback(
     (kind: NodeKind) =>
-      setNodes((ns: FlowNode[]) => [...ns, makeNode(kind, 140 + Math.random() * 260, 90 + Math.random() * 200)]),
+      setNodes((ns: FlowNode[]) => [...ns, makeNode(kind, 160 + Math.random() * 280, 110 + Math.random() * 220)]),
     [setNodes],
   )
 
-  // ---- Autosave (debounced) ----------------------------------------------
+  // ---- Autosave (debounced, respects the lime toggle) ----------------------
 
   const save = useCallback(async () => {
     const id = idRef.current
@@ -99,16 +133,16 @@ export default function StudioApp() {
   }, [name, nodes, edges])
 
   useEffect(() => {
-    if (!workflowId) return
+    if (!workflowId || !auto) return
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => void save(), 800)
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, name, workflowId])
+  }, [nodes, edges, name, workflowId, auto])
 
-  // ---- Workflow lifecycle --------------------------------------------------
+  // ---- Workflow lifecycle ---------------------------------------------------
 
   const loadWorkflow = useCallback(async () => {
     try {
@@ -116,7 +150,6 @@ export default function StudioApp() {
       if (!res.ok) return setNet("offline")
       const all = (await res.json()) as { id: string; name: string }[]
       if (all.length === 0) {
-        // Blank canvas — user wires their own graph.
         setNodes([]), setEdges([]), setNet("saved")
         return
       }
@@ -138,10 +171,14 @@ export default function StudioApp() {
   }, [setNodes, setEdges])
 
   const newWorkflow = useCallback(async () => {
+    // Title matches the reference format; date local to the user.
     const res = await fetch(`${SERVER}/api/workflows`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Untitled workflow", graph: { nodes: [], links: [] } }),
+      body: JSON.stringify({
+        name: `New Workflow - ${new Date().toLocaleDateString("en-GB").replace(/\//g, "/")}`,
+        graph: { nodes: [], links: [] },
+      }),
     })
     if (!res.ok) return toast("error", "Could not create workflow")
     const wf = (await res.json()) as { id: string; name: string }
@@ -159,11 +196,11 @@ export default function StudioApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- Queue + live progress ----------------------------------------------
+  // ---- Queue + live progress ------------------------------------------------
 
-  const queue = useCallback(async () => {
+  const run = useCallback(async () => {
     if (!workflowId) return
-    await save() // flush pending edits before enqueueing
+    if (auto) await save() // flush pending edits before enqueueing
     const res = await fetch(`${SERVER}/api/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -178,8 +215,9 @@ export default function StudioApp() {
     }
     const job = (await res.json()) as { id: string }
     setRunLog((l) => [...l, `▸ queued ${job.id}`])
+    setJobsCount((c) => c + 1)
     toast("info", "Job queued")
-  }, [workflowId, save, toast])
+  }, [workflowId, save, toast, auto])
 
   useEffect(() => {
     const ws = new WebSocket(`${SERVER.replace(/^http/, "ws")}/ws`)
@@ -187,8 +225,8 @@ export default function StudioApp() {
       void fetch(`${SERVER}/api/jobs?limit=1`)
         .then((r) => r.json())
         .then((js) => {
-          // Progress bar resumes for a job that's already running.
-          const j = (js as { id: string; status: string; promptRecord: Record<string, unknown>; nodeState: Record<string, string> }[])[0]
+          // Progress line resumes for a job that's already running.
+          const j = (js as { id: string; status: string; nodeState: Record<string, string> }[])[0]
           if (j?.status === "running") {
             setBusy(true)
             setProgress(0)
@@ -253,83 +291,120 @@ export default function StudioApp() {
     return () => ws.close()
   }, [setNodes, toast])
 
-  const netColor =
-    net === "offline"
-      ? "var(--error)"
-      : net === "saved"
-        ? "var(--success)"
-        : net === "saving"
-          ? "var(--warning)"
-          : "var(--text-muted)"
+  const netDot =
+    net === "offline" ? "var(--error)" : net === "saved" ? "var(--run)" : net === "saving" ? "var(--upgrade)" : "var(--text-muted)"
+  const netLabel = net === "offline" ? "offline" : net === "saved" ? "saved" : net === "saving" ? "saving…" : "idle"
 
   return (
-    <div
-      className="flex h-screen w-screen flex-col overflow-hidden"
-      style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}
-    >
-      {/* ---- Top bar (TobyFlow header + CTA) ---- */}
-      <header className="flex h-11 shrink-0 items-center gap-2 px-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
-        <h1 className="tfy-title">YK Studio</h1>
-        <span className="tfy-badge">v0.1.0</span>
-        <span className="flex-1" />
-        {progress !== null && (
-          <div
-            className="h-1 w-40 shrink-0 overflow-hidden rounded-full"
-            style={{ background: "var(--bg-tertiary)" }}
-          >
-            <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{
-                width: `${progress}%`,
-                background: "linear-gradient(90deg, var(--accent), var(--accent-2))",
-              }}
-            />
-          </div>
-        )}
-        <input className="tfy-input w-56" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="button" className="tfy-btn" onClick={() => void newWorkflow()}>
-          + New
-        </button>
-        <span className="flex items-center gap-1.5 px-1 text-[11px]" style={{ color: netColor }}>
-          <span className="inline-block size-1.5 rounded-full" style={{ background: netColor }} />
-          {net}
-        </span>
+    <div className="flex h-screen w-screen flex-col overflow-hidden" style={{ background: "var(--bg-canvas)", color: "var(--text-primary)" }}>
+      {/* ---- Top bar: title + toggle | runs/nodes/Upgrade/Max Speed/Create/X ---- */}
+      <header className="flex h-12 shrink-0 items-center gap-2 px-4" style={{ background: "var(--bg-chrome)", borderBottom: "1px solid var(--border)" }}>
+        <input className="tfy-title-input" value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} />
         <button
           type="button"
-          className="tfy-btn-accent"
-          onClick={() => void queue()}
-          disabled={!workflowId || busy}
-        >
-          {busy ? "Generating…" : "Generate"}
+          className={`tfy-switch ${auto ? "" : "off"}`}
+          aria-label="Autosave"
+          title={auto ? "Autosave on" : "Autosave off"}
+          onClick={() => setAuto((a) => !a)}
+        />
+        <span className="flex-1" />
+        <span className="tfy-pill" title="Jobs queued this session">
+          <Icon>{I.bolt}</Icon>
+          Runs <b>{jobsCount}/10</b>
+        </span>
+        <span className="tfy-pill" title="Nodes on canvas">
+          <Icon>{I.node}</Icon>
+          Nodes <b>{nodes.length}/5</b>
+        </span>
+        <button type="button" className="tfy-upgrade" title="Placeholder — licensing later">
+          <Icon>{I.crown}</Icon>
+          Upgrade
+        </button>
+        <span className="tfy-pill" title="Execution mode (visual only)">
+          Max Speed
+        </span>
+        <button type="button" className="tfy-create" onClick={() => void run()} disabled={!workflowId || busy}>
+          {busy ? "Running…" : "Create"}
+        </button>
+        <button type="button" className="tfy-icon" title="Console" onClick={() => setLogOpen((o) => !o)}>
+          <Icon>{I.close}</Icon>
         </button>
       </header>
 
-      {/* ---- Body: palette + canvas ---- */}
-      <div className="flex min-h-0 flex-1">
-        {paletteOpen && (
-          <aside
-            className="flex w-52 shrink-0 flex-col gap-1.5 overflow-auto p-2.5"
-            style={{ borderRight: "1px solid var(--border)" }}
-          >
-            <div className="tfy-label px-1 pb-1 pt-2">Node Library</div>
-            {NODE_KINDS.map((k) => (
-              <button
-                key={k.kind}
-                type="button"
-                onClick={() => addNode(k.kind)}
-                className="tfy-card rounded-lg px-2.5 py-2 text-left transition-opacity hover:opacity-90"
-              >
-                <span className="flex items-center gap-2 text-xs font-medium">
-                  <span className="inline-block size-2 rounded-sm" style={{ background: k.color }} />
-                  {k.label}
-                </span>
-                <span className="mt-0.5 block text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  {k.desc}
-                </span>
-              </button>
-            ))}
-          </aside>
+      {/* ---- Brand row (below header, like reference) ---- */}
+      <div className="flex h-9 shrink-0 items-center gap-2 px-4" style={{ background: "var(--bg-chrome)" }}>
+        <span className="inline-block size-4 rounded-full" style={{ background: "var(--run)" }} />
+        <span className="text-[13px] font-medium">YK Studio</span>
+        <span className="tfy-badge">free</span>
+        <span title={`Autosave: ${netLabel}`} className="ml-1 inline-flex items-center gap-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          <span className="inline-block size-1.5 rounded-full" style={{ background: netDot }} />
+          {netLabel}
+        </span>
+        <span className="flex-1" />
+        {progress !== null && (
+          <div className="mx-2 h-1 w-40 shrink-0 overflow-hidden rounded-full" style={{ background: "var(--bg-raise)" }}>
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{ width: `${progress}%`, background: "var(--accent)" }}
+            />
+          </div>
         )}
+        <button type="button" className="tfy-recent" style={{ height: 26 }} onClick={() => setLogOpen((o) => !o)}>
+          <Icon>{I.hist}</Icon>
+          Console
+        </button>
+      </div>
+
+      {/* ---- Body: left icon rail + canvas ---- */}
+      <div className="relative flex min-h-0 flex-1">
+        {/* Left vertical toolbar */}
+        <div className="absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center gap-1.5 rounded-xl p-1.5" style={{ background: "var(--bg-chrome)", border: "1px solid var(--border)" }}>
+          <span className="group relative">
+            <button type="button" className="tfy-add" onClick={() => void newWorkflow()} title="New workflow">
+              <Icon>{I.plus}</Icon>
+            </button>
+          </span>
+          {(
+            [
+              ["cursor", I.cursor, "Cursor"],
+              ["history", I.clock, "History"],
+              ["docs", I.doc, "Docs"],
+              ["dup", I.copy, "Duplicate graph"],
+            ] as const
+          ).map(([t, icon, label]) => (
+            <button
+              key={t}
+              type="button"
+              className={`tfy-icon ${tool === t ? "active" : ""}`}
+              title={`${label} (visual)`}
+              onClick={() => setTool(t)}
+            >
+              <Icon>{icon}</Icon>
+            </button>
+          ))}
+          <button type="button" className="tfy-run" title="Run graph" onClick={() => void run()} disabled={!workflowId || busy}>
+            <Icon>{I.play}</Icon>
+          </button>
+          {(
+            [
+              ["undo", I.undo, "Undo"],
+              ["redo", I.redo, "Redo"],
+              ["zoom", I.zoom, "Zoom"],
+              ["grid", I.grid, "Grid"],
+              ["gear", I.gear, "Settings"],
+            ] as const
+          ).map(([t, icon, label]) => (
+            <button
+              key={t}
+              type="button"
+              className={`tfy-icon ${tool === t ? "active" : ""}`}
+              title={`${label} (visual)`}
+              onClick={() => t === "undo" || t === "redo" ? undefined : setTool(t)}
+            >
+              <Icon>{icon}</Icon>
+            </button>
+          ))}
+        </div>
 
         <div className="relative min-w-0 flex-1">
           <ReactFlow
@@ -342,50 +417,55 @@ export default function StudioApp() {
             fitView
             proOptions={{ hideAttribution: true }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#323238" />
-            <Controls
-              showInteractive={false}
-              style={{ background: "var(--bg-secondary)", borderRadius: 8, overflow: "hidden" }}
-            />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#262626" />
           </ReactFlow>
+
+          {/* Bottom-left zoom pill */}
+          <div className="tfy-zoom absolute bottom-4 left-3 z-10">
+            <Icon>{I.zoom}</Icon>
+            <span className="px-1 text-[12px]">{Math.round((rf.getZoom() ?? 1) * 100)}%</span>
+            <button type="button" title="Zoom out">−</button>
+            <button type="button" title="Zoom in">+</button>
+            <button type="button" title="Fit view" onClick={() => rf.fitView()}>
+              <Icon>{I.fit}</Icon>
+            </button>
+          </div>
+
+          {/* Bottom-center Recent pill = open console drawer */}
+          <button type="button" className="tfy-recent absolute bottom-4 left-1/2 z-10 -translate-x-1/2" onClick={() => setLogOpen((o) => !o)}>
+            <Icon>{I.hist}</Icon>
+            Recent
+          </button>
+
+          {/* Palette +: add the four node kinds */}
           <button
             type="button"
-            className="tfy-btn absolute left-2 top-2 z-10"
-            onClick={() => setPaletteOpen((p) => !p)}
+            className="tfy-add absolute right-4 top-4 z-10"
+            title="Add node (alternates Prompt/Generate)"
+            onClick={() => addNode(nodes.length % 2 === 0 ? "prompt" : "generate")}
           >
-            {paletteOpen ? "◀ hide" : "▶ nodes"}
+            <Icon>{I.plus}</Icon>
           </button>
         </div>
       </div>
 
-      {/* ---- Run log (bottom drawer, console style) ---- */}
-      <section className="shrink-0" style={{ borderTop: "1px solid var(--border)" }}>
-        <button
-          type="button"
-          onClick={() => setLogOpen((o) => !o)}
-          className="flex h-[28px] w-full items-center gap-2 px-3.5"
-        >
-          <span className="tfy-label">Console</span>
-          <span className="flex-1" />
-          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            {logOpen ? "▼" : "▲"}
-          </span>
-        </button>
-        {logOpen && (
-          <div
-            className="h-[100px] overflow-auto px-3.5 pb-2 font-mono text-[11px] leading-5"
-            style={{ color: "var(--text-secondary)" }}
-          >
+      {/* ---- Bottom edge: blue progress line ---- */}
+      <div className="h-0.5 w-full shrink-0" style={{ background: "var(--edge-line)", opacity: busy ? 1 : 0.25 }} />
+
+      {/* ---- Collapse console drawer ---- */}
+      {logOpen && (
+        <section className="absolute bottom-14 left-1/2 z-20 w-[520px] -translate-x-1/1 p-0" style={{ left: "50%" }}>
+          <div className="tfy-zoom h-[140px] w-full flex-col items-stretch p-2 font-mono text-[11px]" style={{ display: "flex" }}>
             {runLog.length === 0 ? (
-              <span style={{ color: "var(--text-muted)" }}>queue empty — wire nodes, then Generate</span>
+              <span style={{ color: "var(--text-muted)" }}>queue empty — wire nodes, then Create</span>
             ) : (
               runLog.map((l, i) => <div key={i}>{l}</div>)
             )}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* ---- Toasts (TobyFlow bottom-left slide-up) ---- */}
+      {/* ---- Toasts (bottom-left slide-up) ---- */}
       <div className="tfy-toast-container">
         {toasts.map((t) => (
           <div

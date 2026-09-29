@@ -1,137 +1,229 @@
-/* TobyFlow v2 design tokens — visual language only; concepts, no upstream code.
-   Dark zinc surfaces + indigo accent + gradient CTA + pill controls + toasts. */
+/* TobyFlow v2 design tokens — visual language only; concepts, no upstream code. */
 
 :root {
-  --bg-primary: #1a1a1e;
-  --bg-secondary: #27272a;
-  --bg-tertiary: #323238;
-  --text-primary: #e4e4e7;
+  --bg-canvas: #0e0e0e;
+  --bg-chrome: #151515;
+  --bg-surface: #1a1a1a;
+  --bg-raise: #1f1f1f;
+  --bg-tooltip: #1c1c1c;
+  --border: #262626;
+  --border-strong: #2e2e2e;
+  --text-primary: #ffffff;
   --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
-  --border: #2e2e33;
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
-  --accent-2: #8b5cf6;
-  --success: #22c55e;
-  --warning: #eab308;
-  --error: #ef4444;
+  --text-muted: #8b8b8b;
+  --accent: #c6f24e;
+  --run: #22c55e;
+  --upgrade: #f5a623;
+  --edge-line: #2f80ed;
+  --error: #dc2626;
   --radius: 8px;
-  --radius-sm: 4px;
 }
 
-/* Buttons */
-.tfy-btn {
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-secondary);
+/* ---- Left rail icon buttons ---- */
+.tfy-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
   cursor: pointer;
   transition: all 0.15s;
 }
-.tfy-btn:hover { border-color: var(--accent); color: var(--text-primary); }
-.tfy-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tfy-icon:hover { background: var(--bg-raise); color: var(--text-primary); }
+.tfy-icon:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.tfy-icon:disabled:hover { color: var(--text-muted); }
+.tfy-icon.active { color: var(--accent); }
 
-.tfy-btn-accent {
-  padding: 7px 14px;
+.tfy-add {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 50%;
+  background: var(--accent);
+  color: #111;
+  cursor: pointer;
+  font-size: 18px;
+  transition: opacity 0.15s;
+}
+.tfy-add:hover { opacity: 0.85; }
+
+.tfy-run {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--run);
   color: white;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  font-size: 13px;
+}
+.tfy-run:hover { opacity: 0.85; }
+.tfy-run:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- Header pills / buttons ---- */
+.tfy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--bg-raise);
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tfy-pill b { color: var(--text-primary); font-weight: 500; }
+
+.tfy-upgrade {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 9999px;
+  background: var(--upgrade);
+  color: #1a1a1a;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.tfy-btn-accent:hover { opacity: 0.9; }
-.tfy-btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+.tfy-upgrade:hover { opacity: 0.9; }
 
-.tfy-btn-outline {
-  padding: 5px 10px;
-  border: 1px solid var(--accent);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-/* Inputs */
-.tfy-input {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 12px;
-}
-.tfy-input:focus { outline: none; border-color: var(--accent); }
-.tfy-textarea {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid var(--border);
+.tfy-create {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
   border-radius: var(--radius);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 12px;
-  resize: vertical;
-  font-family: inherit;
-}
-.tfy-textarea:focus { outline: none; border-color: var(--accent); }
-
-/* Micro labels + cards */
-.tfy-label {
-  font-size: 10px;
-  color: var(--text-muted);
+  background: #ffffff;
+  color: #111;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
-.tfy-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+.tfy-create:hover { opacity: 0.9; }
+.tfy-create:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Lime toggle (autosave on/off) */
+.tfy-switch {
+  width: 30px;
+  height: 17px;
+  border: none;
+  border-radius: 9999px;
+  background: var(--accent);
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.tfy-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.15s;
+}
+.tfy-switch.off { background: var(--border-strong); }
+.tfy-switch.off::after { transform: translateX(-13px); }
+
+/* Tooltip bubble */
+.tfy-tooltip {
+  background: var(--bg-tooltip);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 6px 10px;
+}
+
+/* ---- Floating overlays ---- */
+.tfy-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-}
-.tfy-chip {
-  padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
   color: var(--text-muted);
-  font-size: 10px;
+}
+.tfy-zoom button {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0 6px;
+  height: 100%;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tfy-zoom button:hover { color: var(--text-primary); }
+
+.tfy-recent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9999px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
   cursor: pointer;
 }
-.tfy-chip:hover { border-color: var(--accent); }
-.tfy-chip.active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
+.tfy-recent:hover { background: var(--bg-raise); }
 
-/* Gradient title */
-.tfy-title {
-  font-size: 15px;
-  font-weight: 700;
-  margin: 0;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-/* Version badge */
 .tfy-badge {
   font-size: 10px;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
-  background: var(--bg-secondary);
-  padding: 2px 5px;
-  border-radius: 3px;
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
 }
 
-/* Toasts (bottom-left, slide-up) */
+/* Textarea / inputs (ParamNode) */
+.tfy-input,
+.tfy-textarea {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+}
+.tfy-input { width: 220px; height: 30px; }
+.tfy-textarea { width: 100%; resize: vertical; }
+.tfy-input:focus,
+.tfy-textarea:focus { outline: none; border-color: var(--accent); }
+
+/* ---- Toasts (bottom-left, slide-up) ---- */
 .tfy-toast-container {
   position: fixed;
-  bottom: 16px;
+  bottom: 48px;
   left: 16px;
   display: flex;
   flex-direction: column;
@@ -143,20 +235,19 @@
   border-radius: var(--radius);
   font-size: 12px;
   cursor: pointer;
-  color: white;
   animation: tfy-slide-up 0.2s ease;
 }
-.tfy-toast-success { background: #059669; }
-.tfy-toast-error { background: #dc2626; }
-.tfy-toast-info { background: var(--accent); }
+.tfy-toast-success { background: var(--run); color: white; }
+.tfy-toast-error { background: var(--error); color: white; }
+.tfy-toast-info { background: var(--accent); color: #111; }
 
 @keyframes tfy-slide-up {
   from { transform: translateY(10px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* Scrollbar (TobyFlow thin) */
-::-webkit-scrollbar { width: 6px; }
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

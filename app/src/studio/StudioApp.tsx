@@ -49,9 +49,15 @@ export default function StudioApp() {
   const [logOpen, setLogOpen] = useState(true)
   const [paletteOpen, setPaletteOpen] = useState(true)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [progress, setProgress] = useState<number | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idRef = useRef<string | null>(null)
   idRef.current = workflowId
+  const nodesRef = useRef<FlowNode[]>([])
+  nodesRef.current = nodes
+  const doneCount = useRef(0)
+  const busyRef = useRef(false)
+  busyRef.current = busy
 
   const toast = useCallback((type: Toast["type"], message: string) => {
     const id = Date.now() + Math.random()
@@ -177,6 +183,19 @@ export default function StudioApp() {
 
   useEffect(() => {
     const ws = new WebSocket(`${SERVER.replace(/^http/, "ws")}/ws`)
+    ws.onopen = () =>
+      void fetch(`${SERVER}/api/jobs?limit=1`)
+        .then((r) => r.json())
+        .then((js) => {
+          // Progress bar resumes for a job that's already running.
+          const j = (js as { id: string; status: string; promptRecord: Record<string, unknown>; nodeState: Record<string, string> }[])[0]
+          if (j?.status === "running") {
+            setBusy(true)
+            setProgress(0)
+            doneCount.current = Object.values(j.nodeState ?? {}).filter((s) => s === "done" || s === "failed").length
+          }
+        })
+        .catch(() => {})
     ws.onmessage = (evt) => {
       try {
         const e = JSON.parse(evt.data) as {
@@ -193,6 +212,8 @@ export default function StudioApp() {
         if (e.type === "job_started") {
           line = `▶ job ${e.jobId}`
           setBusy(true)
+          setProgress(0)
+          doneCount.current = 0
           toast("info", "Running graph…")
         } else if (e.type === "node_started") {
           line = `  ▸ ${e.nodeId}`
@@ -206,11 +227,23 @@ export default function StudioApp() {
         } else if (e.type === "job_done") {
           line = `● done ${e.jobId}`
           setBusy(false)
+          setProgress(100)
+          setTimeout(() => setProgress(null), 1200)
           toast("success", "Graph finished")
         } else if (e.type === "job_failed") {
           line = `✗ job failed: ${e.error ?? ""}`
           setBusy(false)
+          setProgress(null)
           toast("error", `Job failed: ${e.error ?? ""}`)
+        }
+        if (
+          (e.type === "node_done" || e.type === "node_failed") &&
+          busyRef.current &&
+          e.nodeId &&
+          nodesRef.current.some((n) => n.id === e.nodeId)
+        ) {
+          doneCount.current += 1
+          setProgress(Math.round((doneCount.current / Math.max(nodesRef.current.length, 1)) * 100))
         }
         setRunLog((l) => [...l, line].slice(-100))
       } catch {
@@ -239,6 +272,20 @@ export default function StudioApp() {
         <h1 className="tfy-title">YK Studio</h1>
         <span className="tfy-badge">v0.1.0</span>
         <span className="flex-1" />
+        {progress !== null && (
+          <div
+            className="h-1 w-40 shrink-0 overflow-hidden rounded-full"
+            style={{ background: "var(--bg-tertiary)" }}
+          >
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${progress}%`,
+                background: "linear-gradient(90deg, var(--accent), var(--accent-2))",
+              }}
+            />
+          </div>
+        )}
         <input className="tfy-input w-56" value={name} onChange={(e) => setName(e.target.value)} />
         <button type="button" className="tfy-btn" onClick={() => void newWorkflow()}>
           + New

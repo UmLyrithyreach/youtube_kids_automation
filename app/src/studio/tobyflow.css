@@ -179,6 +179,14 @@
 }
 .tfy-zoom button:hover { color: var(--text-primary); }
 
+/* ZoomTools is a <ReactFlow> child → wrapper positions it bottom-left of canvas */
+.zoomable {
+  position: absolute;
+  bottom: 16px;
+  left: 12px;
+  z-index: 10;
+}
+
 .tfy-recent {
   display: inline-flex;
   align-items: center;

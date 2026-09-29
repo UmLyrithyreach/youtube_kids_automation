@@ -15,6 +15,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStore,
   type Connection,
   type Edge,
 } from "@xyflow/react"
@@ -69,6 +70,23 @@ function Icon({ children }: { children: React.ReactNode }) {
   )
 }
 
+/* Live zoom % + zoom/fit actions — must live INSIDE <ReactFlow /> (provider context). */
+function ZoomTools() {
+  const zoom = useStore((s) => s.transform[2])
+  const { zoomIn, zoomOut, fitView } = useReactFlow()
+  return (
+    <div className="tfy-zoom zoomable">
+      <Icon>{I.zoom}</Icon>
+      <span className="px-1 text-[12px]">{Math.round(zoom * 100)}%</span>
+      <button type="button" title="Zoom out" onClick={() => zoomOut({ duration: 150 })}>−</button>
+      <button type="button" title="Zoom in" onClick={() => zoomIn({ duration: 150 })}>+</button>
+      <button type="button" title="Fit view" onClick={() => fitView({ duration: 150 })}>
+        <Icon>{I.fit}</Icon>
+      </button>
+    </div>
+  )
+}
+
 export default function StudioApp() {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -91,7 +109,6 @@ export default function StudioApp() {
   const doneCount = useRef(0)
   const busyRef = useRef(false)
   busyRef.current = busy
-  const rf = useReactFlow()
 
   const toast = useCallback((type: Toast["type"], message: string) => {
     const id = Date.now() + Math.random()
@@ -418,18 +435,10 @@ export default function StudioApp() {
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#262626" />
+            <ZoomTools />
           </ReactFlow>
 
-          {/* Bottom-left zoom pill */}
-          <div className="tfy-zoom absolute bottom-4 left-3 z-10">
-            <Icon>{I.zoom}</Icon>
-            <span className="px-1 text-[12px]">{Math.round((rf.getZoom() ?? 1) * 100)}%</span>
-            <button type="button" title="Zoom out">−</button>
-            <button type="button" title="Zoom in">+</button>
-            <button type="button" title="Fit view" onClick={() => rf.fitView()}>
-              <Icon>{I.fit}</Icon>
-            </button>
-          </div>
+          {/* Bottom-left zoom pill (ZoomTools renders INSIDE <ReactFlow> above) */}
 
           {/* Bottom-center Recent pill = open console drawer */}
           <button type="button" className="tfy-recent absolute bottom-4 left-1/2 z-10 -translate-x-1/2" onClick={() => setLogOpen((o) => !o)}>

@@ -8,9 +8,9 @@ export interface StudioNodeData extends Record<string, unknown> {
   status?: "pending" | "running" | "done" | "failed"
 }
 
-export const NODE_KINDS: { kind: NodeKind; label: string }[] = [
-  { kind: "prompt", label: "Prompt" },
-  { kind: "generate", label: "Generate" },
-  { kind: "asset", label: "Asset" },
-  { kind: "download", label: "Download" },
+export const NODE_KINDS: { kind: NodeKind; label: string; color: string; desc: string }[] = [
+  { kind: "prompt", label: "Prompt", color: "#E56A4A", desc: "Text the graph starts from" },
+  { kind: "generate", label: "Generate", color: "#22c55e", desc: "Run the producer step" },
+  { kind: "asset", label: "Asset", color: "#3b82f6", desc: "External file or URL input" },
+  { kind: "download", label: "Download", color: "#eab308", desc: "Sink — saves the result" },
 ]

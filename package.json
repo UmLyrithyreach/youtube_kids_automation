@@ -9,7 +9,7 @@
     "server"
   ],
   "scripts": {
-    "dev": "concurrently -n app,server -c blue,green \"npm run dev -w app\" \"node server/index.ts\"",
+    "dev": "concurrently -n app,server -c blue,green \"npm run dev -w app\" \"npm run dev -w server\"",
     "build": "npm run build -w app && npm run build -w server",
     "start": "node server/dist/index.js",
     "lint": "npm run lint -w app"

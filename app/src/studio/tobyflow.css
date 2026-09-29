@@ -1,0 +1,162 @@
+/* TobyFlow v2 design tokens — visual language only; concepts, no upstream code.
+   Dark zinc surfaces + indigo accent + gradient CTA + pill controls + toasts. */
+
+:root {
+  --bg-primary: #1a1a1e;
+  --bg-secondary: #27272a;
+  --bg-tertiary: #323238;
+  --text-primary: #e4e4e7;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --border: #2e2e33;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-2: #8b5cf6;
+  --success: #22c55e;
+  --warning: #eab308;
+  --error: #ef4444;
+  --radius: 8px;
+  --radius-sm: 4px;
+}
+
+/* Buttons */
+.tfy-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tfy-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.tfy-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.tfy-btn-accent {
+  padding: 7px 14px;
+  border: none;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.tfy-btn-accent:hover { opacity: 0.9; }
+.tfy-btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.tfy-btn-outline {
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* Inputs */
+.tfy-input {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.tfy-input:focus { outline: none; border-color: var(--accent); }
+.tfy-textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  resize: vertical;
+  font-family: inherit;
+}
+.tfy-textarea:focus { outline: none; border-color: var(--accent); }
+
+/* Micro labels + cards */
+.tfy-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.tfy-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.tfy-chip {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+.tfy-chip:hover { border-color: var(--accent); }
+.tfy-chip.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* Gradient title */
+.tfy-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Version badge */
+.tfy-badge {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+/* Toasts (bottom-left, slide-up) */
+.tfy-toast-container {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 1000;
+}
+.tfy-toast {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  cursor: pointer;
+  color: white;
+  animation: tfy-slide-up 0.2s ease;
+}
+.tfy-toast-success { background: #059669; }
+.tfy-toast-error { background: #dc2626; }
+.tfy-toast-info { background: var(--accent); }
+
+@keyframes tfy-slide-up {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Scrollbar (TobyFlow thin) */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

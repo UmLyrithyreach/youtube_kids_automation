@@ -1,5 +1,7 @@
 // StudioApp — the whole app IS the node canvas (ComfyUI-style).
-// Top bar: workflow name + queue/new. Left: node palette. Center: canvas.
+// TobyFlow v2 visual language: zinc surfaces, indigo accent, gradient CTA,
+// pill controls, version badge, toasts. Canvas stays ComfyUI.
+// Top bar: brand + workflow name + Generate. Left: node palette. Center: canvas.
 // Bottom: run log. Old hub tabs are bypassed entirely.
 
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -15,6 +17,7 @@ import {
   type Edge,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import "./tobyflow.css"
 import { ParamNode } from "./ParamNode"
 import { NODE_KINDS, type NodeKind, type StudioNodeData } from "./nodeTypes"
 
@@ -33,6 +36,8 @@ function makeNode(kind: NodeKind, x: number, y: number, prompt = ""): FlowNode {
   }
 }
 
+type Toast = { id: number; type: "success" | "error" | "info"; message: string }
+
 export default function StudioApp() {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -43,9 +48,16 @@ export default function StudioApp() {
   const [busy, setBusy] = useState(false)
   const [logOpen, setLogOpen] = useState(true)
   const [paletteOpen, setPaletteOpen] = useState(true)
+  const [toasts, setToasts] = useState<Toast[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const idRef = useRef<string | null>(null)
   idRef.current = workflowId
+
+  const toast = useCallback((type: Toast["type"], message: string) => {
+    const id = Date.now() + Math.random()
+    setToasts((t) => [...t, { id, type, message }])
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500)
+  }, [])
 
   const onConnect = useCallback(
     (c: Connection) =>
@@ -93,26 +105,30 @@ export default function StudioApp() {
   // ---- Workflow lifecycle --------------------------------------------------
 
   const loadWorkflow = useCallback(async () => {
-    const res = await fetch(`${SERVER}/api/workflows`)
-    if (!res.ok) return setNet("offline")
-    const all = (await res.json()) as { id: string; name: string }[]
-    if (all.length === 0) {
-      // Blank canvas — user wires their own graph.
-      setNodes([]), setEdges([]), setNet("saved")
-      return
+    try {
+      const res = await fetch(`${SERVER}/api/workflows`)
+      if (!res.ok) return setNet("offline")
+      const all = (await res.json()) as { id: string; name: string }[]
+      if (all.length === 0) {
+        // Blank canvas — user wires their own graph.
+        setNodes([]), setEdges([]), setNet("saved")
+        return
+      }
+      const full = await fetch(`${SERVER}/api/workflows/${all[0].id}`)
+      if (!full.ok) return setNet("offline")
+      const rec = (await full.json()) as {
+        id: string
+        name: string
+        graph: { nodes: FlowNode[]; links: { id: string; source: string; target: string }[] }
+      }
+      setWorkflowId(rec.id)
+      setName(rec.name)
+      setNodes(rec.graph.nodes)
+      setEdges(rec.graph.links.map((l) => ({ id: l.id, source: l.source, target: l.target }) as Edge))
+      setNet("saved")
+    } catch {
+      setNet("offline")
     }
-    const full = await fetch(`${SERVER}/api/workflows/${all[0].id}`)
-    if (!full.ok) return setNet("offline")
-    const rec = (await full.json()) as {
-      id: string
-      name: string
-      graph: { nodes: FlowNode[]; links: { id: string; source: string; target: string }[] }
-    }
-    setWorkflowId(rec.id)
-    setName(rec.name)
-    setNodes(rec.graph.nodes)
-    setEdges(rec.graph.links.map((l) => ({ id: l.id, source: l.source, target: l.target }) as Edge))
-    setNet("saved")
   }, [setNodes, setEdges])
 
   const newWorkflow = useCallback(async () => {
@@ -121,14 +137,15 @@ export default function StudioApp() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Untitled workflow", graph: { nodes: [], links: [] } }),
     })
-    if (!res.ok) return setNet("offline")
+    if (!res.ok) return toast("error", "Could not create workflow")
     const wf = (await res.json()) as { id: string; name: string }
     setWorkflowId(wf.id)
     setName(wf.name)
     setNodes([])
     setEdges([])
     setNet("saved")
-  }, [setNodes, setEdges])
+    toast("success", "New workflow created")
+  }, [setNodes, setEdges, toast])
 
   useEffect(() => {
     void loadWorkflow()
@@ -148,12 +165,15 @@ export default function StudioApp() {
     })
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}) as { error?: string })
-      setRunLog((l) => [...l, `✗ queue rejected: ${detail.error ?? res.status}`])
+      const msg = `Queue rejected: ${detail.error ?? res.status}`
+      toast("error", msg)
+      setRunLog((l) => [...l, `✗ ${msg}`])
       return
     }
     const job = (await res.json()) as { id: string }
     setRunLog((l) => [...l, `▸ queued ${job.id}`])
-  }, [workflowId, save])
+    toast("info", "Job queued")
+  }, [workflowId, save, toast])
 
   useEffect(() => {
     const ws = new WebSocket(`${SERVER.replace(/^http/, "ws")}/ws`)
@@ -173,6 +193,7 @@ export default function StudioApp() {
         if (e.type === "job_started") {
           line = `▶ job ${e.jobId}`
           setBusy(true)
+          toast("info", "Running graph…")
         } else if (e.type === "node_started") {
           line = `  ▸ ${e.nodeId}`
           if (e.nodeId) mark(e.nodeId, "running")
@@ -185,9 +206,11 @@ export default function StudioApp() {
         } else if (e.type === "job_done") {
           line = `● done ${e.jobId}`
           setBusy(false)
+          toast("success", "Graph finished")
         } else if (e.type === "job_failed") {
           line = `✗ job failed: ${e.error ?? ""}`
           setBusy(false)
+          toast("error", `Job failed: ${e.error ?? ""}`)
         }
         setRunLog((l) => [...l, line].slice(-100))
       } catch {
@@ -195,52 +218,42 @@ export default function StudioApp() {
       }
     }
     return () => ws.close()
-  }, [setNodes])
+  }, [setNodes, toast])
 
   const netColor =
-    net === "offline" ? "#ef4444" : net === "saved" ? "#22c55e" : net === "saving" ? "#eab308" : "#6b7280"
+    net === "offline"
+      ? "var(--error)"
+      : net === "saved"
+        ? "var(--success)"
+        : net === "saving"
+          ? "var(--warning)"
+          : "var(--text-muted)"
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden" style={{ background: "#111113", color: "#f5f5f5" }}>
-      {/* ---- Top bar (ComfyUI command bar) ---- */}
-      <header
-        className="flex h-11 shrink-0 items-center gap-2 px-3"
-        style={{ borderBottom: "1px solid #2a2a2e", background: "#151517" }}
-      >
-        <div
-          className="flex size-6 items-center justify-center rounded-md text-[10px] font-black"
-          style={{ background: "#E56A4A", color: "#111" }}
-        >
-          YK
-        </div>
-        <span className="mr-2 text-sm font-semibold tracking-tight">YK Studio</span>
-        <input
-          className="w-56 rounded-md border px-2 py-1 text-xs outline-none focus:border-[#E56A4A]"
-          style={{ borderColor: "#2a2a2e", background: "#1c1c1f", color: "#f5f5f5" }}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <button
-          type="button"
-          onClick={() => void newWorkflow()}
-          className="rounded-md border px-2 py-1 text-xs hover:bg-white/5"
-          style={{ borderColor: "#2a2a2e", background: "#1c1c1f" }}
-        >
+    <div
+      className="flex h-screen w-screen flex-col overflow-hidden"
+      style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}
+    >
+      {/* ---- Top bar (TobyFlow header + CTA) ---- */}
+      <header className="flex h-11 shrink-0 items-center gap-2 px-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
+        <h1 className="tfy-title">YK Studio</h1>
+        <span className="tfy-badge">v0.1.0</span>
+        <span className="flex-1" />
+        <input className="tfy-input w-56" value={name} onChange={(e) => setName(e.target.value)} />
+        <button type="button" className="tfy-btn" onClick={() => void newWorkflow()}>
           + New
         </button>
-        <span className="flex-1" />
-        <span className="flex items-center gap-1.5 text-[11px]" style={{ color: netColor }}>
+        <span className="flex items-center gap-1.5 px-1 text-[11px]" style={{ color: netColor }}>
           <span className="inline-block size-1.5 rounded-full" style={{ background: netColor }} />
           {net}
         </span>
         <button
           type="button"
+          className="tfy-btn-accent"
           onClick={() => void queue()}
           disabled={!workflowId || busy}
-          className="rounded-md px-3 py-1 text-xs font-semibold disabled:opacity-40"
-          style={{ background: "#E56A4A", color: "#111" }}
         >
-          {busy ? "Running…" : "▶ Queue Graph"}
+          {busy ? "Generating…" : "Generate"}
         </button>
       </header>
 
@@ -248,23 +261,24 @@ export default function StudioApp() {
       <div className="flex min-h-0 flex-1">
         {paletteOpen && (
           <aside
-            className="flex w-52 shrink-0 flex-col gap-1 overflow-auto p-2"
-            style={{ borderRight: "1px solid #2a2a2e", background: "#151517" }}
+            className="flex w-52 shrink-0 flex-col gap-1.5 overflow-auto p-2.5"
+            style={{ borderRight: "1px solid var(--border)" }}
           >
-            <div className="px-1 pb-1 pt-2 text-[10px] font-bold tracking-widest opacity-50">NODE LIBRARY</div>
+            <div className="tfy-label px-1 pb-1 pt-2">Node Library</div>
             {NODE_KINDS.map((k) => (
               <button
                 key={k.kind}
                 type="button"
                 onClick={() => addNode(k.kind)}
-                className="rounded-lg border px-2.5 py-2 text-left transition-colors hover:bg-white/5"
-                style={{ borderColor: "#2a2a2e", background: "#1c1c1f" }}
+                className="tfy-card rounded-lg px-2.5 py-2 text-left transition-opacity hover:opacity-90"
               >
                 <span className="flex items-center gap-2 text-xs font-medium">
                   <span className="inline-block size-2 rounded-sm" style={{ background: k.color }} />
                   {k.label}
                 </span>
-                <span className="mt-0.5 block text-[10px] opacity-50">{k.desc}</span>
+                <span className="mt-0.5 block text-[10px]" style={{ color: "var(--text-muted)" }}>
+                  {k.desc}
+                </span>
               </button>
             ))}
           </aside>
@@ -281,45 +295,62 @@ export default function StudioApp() {
             fitView
             proOptions={{ hideAttribution: true }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#3a3a40" />
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#323238" />
             <Controls
               showInteractive={false}
-              style={{ background: "#1c1c1f", borderColor: "#2a2a2e", borderRadius: 8, overflow: "hidden" }}
+              style={{ background: "var(--bg-secondary)", borderRadius: 8, overflow: "hidden" }}
             />
           </ReactFlow>
           <button
             type="button"
+            className="tfy-btn absolute left-2 top-2 z-10"
             onClick={() => setPaletteOpen((p) => !p)}
-            className="absolute left-2 top-2 z-10 rounded-md border px-2 py-1 text-[10px] hover:bg-white/5"
-            style={{ borderColor: "#2a2a2e", background: "#1c1c1f85", color: "#f5f5f5" }}
           >
             {paletteOpen ? "◀ hide" : "▶ nodes"}
           </button>
         </div>
       </div>
 
-      {/* ---- Run log (bottom drawer) ---- */}
-      <section
-        className="shrink-0 transition-all"
-        style={{ height: logOpen ? 132 : 26, borderTop: "1px solid #2a2a2e", background: "#151517" }}
-      >
+      {/* ---- Run log (bottom drawer, console style) ---- */}
+      <section className="shrink-0" style={{ borderTop: "1px solid var(--border)" }}>
         <button
           type="button"
           onClick={() => setLogOpen((o) => !o)}
-          className="flex h-[26px] w-full items-center gap-2 px-3 text-[10px] font-bold tracking-widest opacity-60 hover:opacity-100"
+          className="flex h-[28px] w-full items-center gap-2 px-3.5"
         >
-          RUN LOG <span className="flex-1" /> {logOpen ? "▼" : "▲"}
+          <span className="tfy-label">Console</span>
+          <span className="flex-1" />
+          <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            {logOpen ? "▼" : "▲"}
+          </span>
         </button>
         {logOpen && (
-          <div className="h-[104px] overflow-auto px-3 pb-2 font-mono text-[11px] leading-5 opacity-90">
+          <div
+            className="h-[100px] overflow-auto px-3.5 pb-2 font-mono text-[11px] leading-5"
+            style={{ color: "var(--text-secondary)" }}
+          >
             {runLog.length === 0 ? (
-              <span className="opacity-40">queue empty — wire nodes, then Queue Graph</span>
+              <span style={{ color: "var(--text-muted)" }}>queue empty — wire nodes, then Generate</span>
             ) : (
               runLog.map((l, i) => <div key={i}>{l}</div>)
             )}
           </div>
         )}
       </section>
+
+      {/* ---- Toasts (TobyFlow bottom-left slide-up) ---- */}
+      <div className="tfy-toast-container">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`tfy-toast tfy-toast-${t.type}`}
+            role="alert"
+            onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
+          >
+            {t.message}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
